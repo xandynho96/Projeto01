@@ -1,0 +1,15 @@
+pandas
+numpy
+ta
+ccxt
+tensorflow
+python-dotenv
+requests
+sqlalchemy
+pyinstaller
+scikit-learn
+schedule
+yfinance
+streamlit
+plotly
+joblib
