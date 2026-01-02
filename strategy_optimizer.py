@@ -138,14 +138,12 @@ class StrategyOptimizer:
         
         # df values to numpy for speed
         closes = df['close'].values
-        # highs = df['high'].values
-        # lows = df['low'].values
-        # Approximation: Check entry vs subsequent Closes for TP/SL
-        # For strict accuracy we need High/Low, but for 1m scalping Close is okay proxy for speed in Grid Search
+        highs = df['high'].values
+        lows = df['low'].values
         
         for idx in entry_indices:
             if idx <= last_exit_idx: continue
-            if idx + 60 >= len(closes): break # End of data
+            if idx + 61 >= len(closes): break # End of data + lookahead
             
             entry_price = closes[idx]
             
@@ -154,16 +152,29 @@ class StrategyOptimizer:
             lost = False
             
             # Check next 60 minutes
+            # Using slice for speed instead of loop
+            # slice_highs = highs[idx+1:idx+61]
+            # slice_lows = lows[idx+1:idx+61]
+            
+            # Manual loop is acceptable for logic clarity as per User Request replacement
+            # But we must use the numpy arrays defined outside
+            
             for future_i in range(idx+1, idx+61):
-                price = closes[future_i]
-                pct = (price - entry_price) / entry_price
+                # 1. Checa Stop Loss primeiro (Conservador/Seguro)
+                current_low = lows[future_i]
+                loss_pct = (current_low - entry_price) / entry_price
                 
-                if pct >= tp:
-                    won = True
+                if loss_pct <= -sl:
+                    lost = True
                     last_exit_idx = future_i
                     break
-                elif pct <= -sl:
-                    lost = True
+                
+                # 2. Checa Take Profit
+                current_high = highs[future_i]
+                gain_pct = (current_high - entry_price) / entry_price
+                
+                if gain_pct >= tp:
+                    won = True
                     last_exit_idx = future_i
                     break
             
@@ -174,7 +185,7 @@ class StrategyOptimizer:
             elif lost:
                 trades += 1
                 total_pnl -= sl
-            # else: Timed out/Flat? Treat as scratch or loss? Let's ignore or close at current
+            # else: Timed out - Ignore or Flat close? User logic ignored timeouts previously. Keep consistent.
             
         winrate = (wins / trades * 100) if trades > 0 else 0
         return {"trades": trades, "winrate": winrate, "pnl": total_pnl}

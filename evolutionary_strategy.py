@@ -13,7 +13,10 @@ INDICATORS = [
     'rsi', 'stoch_k', 'stoch_d', 'adx', 'cci', 'mfi', 'williams_r',
     'dist_ema_200', 'dist_bb_lower',
     'pattern_bullish_engulfing', 'pattern_hammer',
-    'obv_slope', 'supertrend'
+    'obv_slope', 'supertrend',
+    'pattern_marubozu', 'adx_slope',
+    'dist_support', 'dist_resistance',
+    'bb_width'
 ]
 OPERATORS = ['<', '>']
 THRESHOLDS = {
@@ -29,7 +32,12 @@ THRESHOLDS = {
     'pattern_bullish_engulfing': (0.5, 1.5), 
     'pattern_hammer': (0.5, 1.5),
     'obv_slope': (-1000, 1000), # Volume change
-    'supertrend': (0.5, 1.5) # Boolean 1 or 0
+    'supertrend': (0.5, 1.5), # Boolean 1 or 0
+    'pattern_marubozu': (0.5, 1.5),
+    'adx_slope': (-5, 5),
+    'dist_support': (0, 0.1),
+    'dist_resistance': (0, 0.1),
+    'bb_width': (0, 0.5)
 }
 
 class StrategyGene:
@@ -63,28 +71,18 @@ class StrategyGene:
 
 class Genome:
     """Represents a Strategy (Collection of Genes)"""
-    def __init__(self, genes=None, trend_mode=None):
+    def __init__(self, genes=None):
         if genes:
             self.genes = genes
         else:
             self.genes = [StrategyGene() for _ in range(CONDITIONS_PER_STRAT)]
-            
-        # Trend Filter: 'UPTREND' (Above EMA200), 'DOWNTREND' (Below EMA200), or None (Any)
-        # Randomly assign a trend bias or None
-        self.trend_mode = trend_mode if trend_mode else random.choice(['UPTREND', 'DOWNTREND', None])
             
         self.fitness = 0.0
         self.winrate = 0.0
         self.trades = 0
         
     def check_signal(self, row):
-        # 1. Check Trend Filter
-        if self.trend_mode == 'UPTREND':
-            if row['close'] <= row['ema_200']: return False
-        elif self.trend_mode == 'DOWNTREND':
-            if row['close'] >= row['ema_200']: return False
-            
-        # 2. Check Genes
+        # Check Genes
         for gene in self.genes:
             if not gene.evaluate(row):
                 return False
@@ -101,14 +99,11 @@ class Genome:
         idx = random.randint(1, len(self.genes)-1) if len(self.genes)>1 else 0
         child_genes = self.genes[:idx] + other.genes[idx:]
         
-        # Inherit trend from one parent
-        child_trend = self.trend_mode if random.random() > 0.5 else other.trend_mode
-        return Genome(child_genes, trend_mode=child_trend)
+        return Genome(child_genes)
         
     def __repr__(self):
-        trend_str = f"Trend:{self.trend_mode}" if self.trend_mode else "Trend:ANY"
         gene_str = " AND ".join([str(g) for g in self.genes])
-        return f"[{trend_str}] {gene_str}"
+        return f"[Genes] {gene_str}"
 
 class EvolutionaryOptimizer:
     def __init__(self, df=None):
@@ -120,108 +115,53 @@ class EvolutionaryOptimizer:
             dm = DataManager()
             # Increase history for robust validation (User Request)
             self.df = dm.get_data_from_db(limit=50000) 
+            
+            if self.df.empty:
+                print("⚠️ AVISO: Banco de dados local vazio ou insuficiente.")
+                dm.fetch_full_history() # Ensure we have data
+                self.df = dm.get_data_from_db(limit=50000)
+                
+            if self.df.empty:
+                raise Exception("CRITICAL: Não foi possível carregar dados.")
+
             self.df = self.df[self.df['timeframe'] == '1m'].copy()
             # Add indicators
             ta = TechnicalAnalysis(self.df)
             self.df = ta.add_all_indicators()
+            
+            # --- NEW: Add Regimes ---
+            from market_regime import MarketRegime
+            mr = MarketRegime()
+            self.df = mr.add_regime_column(self.df)
+            
             self.df.dropna(inplace=True)
             
     def initialize_population(self):
-        self.population = [Genome() for _ in range(POPULATION_SIZE)]
-        
-    def evaluate_fitness(self, genome):
-        # Backtest the genome
-        # Simple Vectorized check is hard with dynamic conditions, iterating is safer/easier for logic
-        # Optimize speed later
-        
-        data = self.df.copy()
-        balance = 1000
-        wins = 0
-        losses = 0
-        
-        tp = 0.0014
-        sl = 0.0004
-        
-        # We need to simulate
-        # To be fast, we assume 'entry' at close, and checking next N candles outcome is expensive
-        # Let's pre-calculate 'Future Outcome' columns for speed?
-        # Ideally we only evaluate rows where the signal is True.
-        
-        matches = []
-        for index, row in data.iterrows():
-            if genome.check_signal(row):
-                matches.append(index)
-        
-        if len(matches) < 5: # Too few trades = bad
-            genome.fitness = 0
-            genome.trades = len(matches)
-            return
-            
-        # Check outcomes for matches
-        # We need integer locations, index is timestamp potentially
-        # Let's map timestamp index to integer location
-        
-        # Optimization: Pre-calculate "Is Winner" column in DF? 
-        # But "Is Winner" depends on the entry? No, outcome depends on Close[i] vs Future.
-        # Yes! We can pre-calculate "Potential Win" column for Longs.
-        pass # See evolve method for pre-calc logic
+        self.population = []
+        # 2. Fill with Random (DeepSeek removed for simplicity in this specific scope, can be re-added)
+        while len(self.population) < POPULATION_SIZE:
+             self.population.append(Genome())
         
     def pre_calculate_outcomes(self):
-        print("Pré-calculando resultados futuros (Otimização)...")
-        self.df['is_winner'] = False
+        print("Pré-calculando resultados futuros (Otimização Vetorizada)...")
+        from fast_vector import calculate_outcomes_vectorized
         
-        tp = 0.0014
-        sl = 0.0004
-        
-        closes = self.df['close'].values
-        highs = self.df['high'].values
-        lows = self.df['low'].values
-        
-        # Numba or Vectorization would be best, but simple loop for now
-        results = []
-        lookahead = 60
-        n = len(closes)
-        
-        for i in range(n - lookahead):
-            entry = closes[i]
-            win = False
-            
-            # Check window
-            for j in range(1, lookahead):
-                if i+j >= n: break
-                
-                gain = (highs[i+j] - entry) / entry
-                loss = (lows[i+j] - entry) / entry
-                
-                if loss < -sl:
-                    win = False
-                    break
-                if gain > tp:
-                    win = True
-                    break
-            
-            if win:
-                # Store True at the index i
-                results.append(True)
-            else:
-                results.append(False)
-        
-        # Fill rest
-        results += [False]*lookahead
-        self.df['is_winner'] = results
+        # Calculate boolean mask of winners
+        winners_mask = calculate_outcomes_vectorized(
+            self.df, 
+            tp=0.0014, 
+            sl=0.0004, 
+            lookahead=60
+        )
+        self.df['is_winner'] = winners_mask
 
-    def fast_evaluate(self, genome):
-        # Evaluate using pre-calculated column
-        # Only iterate where signal is True
-        
+    def fast_evaluate(self, genome, regime_filter=None):
         # Dynamic Query Construction
         query_parts = []
         
-        # Add Trend Filter to Query
-        if genome.trend_mode == 'UPTREND':
-            query_parts.append("(close > ema_200)")
-        elif genome.trend_mode == 'DOWNTREND':
-            query_parts.append("(close < ema_200)")
+        # Filter by Regime if specified
+        if regime_filter:
+            query_parts.append(f"(regime == '{regime_filter}')")
             
         for gene in genome.genes:
             query_parts.append(f"({gene.indicator} {gene.operator} {gene.threshold})")
@@ -229,13 +169,14 @@ class EvolutionaryOptimizer:
         query_str = " & ".join(query_parts)
         
         try:
+            # Vectorized Boolean Query
             subset = self.df.query(query_str)
-        except:
+        except Exception as e:
              genome.fitness = 0
              return
 
         trades = len(subset)
-        if trades < 10:
+        if trades < 5: # Minimum trades per regime
             genome.fitness = 0
             genome.trades = trades
             genome.winrate = 0
@@ -244,47 +185,73 @@ class EvolutionaryOptimizer:
         wins = subset['is_winner'].sum()
         winrate = (wins / trades) * 100
         
-        genome.trades = trades
-        genome.winrate = winrate
-        genome.fitness = winrate * (1 + (trades/1000)) # Bonus for more trades
+        
+        # Fitness Function Improvement (User Request)
+        # 1. Penalty for low winrate (Random is 50%, so below 50% is bad)
+        if winrate < 50:
+            penalty = 0.1 # Heavily penalize losing strategies
+        else:
+            penalty = 1.0
+            
+        # 2. Minimum Trades Threshold
+        if trades < 30:
+            genome.fitness = 0
+        else:
+            # 3. Logarithmic Scale for Trades (Diminishing returns for quantity)
+            # winrate (0-100) * log(trades) * penalty
+            # Example: 60% WR * log(100) * 1 ~= 60 * 4.6 = 276
+            # Example: 51% WR * log(1000) * 1 ~= 51 * 6.9 = 351 (High volume slightly better)
+            # Example: 45% WR * log(1000) * 0.1 ~= 4.5 * 6.9 = 31 (Punished)
+            
+            # Using natural log
+            genome.fitness = winrate * np.log(trades) * penalty
         
     def evolve(self):
-        print("Iniciando Evolução Genética...")
+        print("Iniciando Evolução Genética Context-Aware...")
         self.pre_calculate_outcomes()
-        self.initialize_population()
         
-        best_ever = None
+        regimes = ['UPTREND', 'DOWNTREND', 'SIDEWAYS']
+        best_strategies = {}
         
-        for gen in range(GENERATIONS):
-            # Evaluate
-            for genome in self.population:
-                self.fast_evaluate(genome)
+        for regime in regimes:
+            print(f"\n🌊 Evoluindo Estratégia para regime: {regime}...")
+            self.initialize_population()
+            best_for_regime = None
             
-            # Sort
-            self.population.sort(key=lambda x: x.fitness, reverse=True)
-            best_gen = self.population[0]
-            print(f"Gen {gen+1} Melhor: {best_gen} | WR: {best_gen.winrate:.1f}% | Trades: {best_gen.trades}")
+            for gen in range(GENERATIONS):
+                # Evaluate
+                for genome in self.population:
+                    self.fast_evaluate(genome, regime_filter=regime)
+                
+                # Sort
+                self.population.sort(key=lambda x: x.fitness, reverse=True)
+                best_gen = self.population[0]
+                
+                # Print stats for top 1
+                if gen % 2 == 0:
+                    print(f"   Gen {gen+1}: WR {best_gen.winrate:.1f}% | Trades {best_gen.trades} | Eq: {best_gen}")
+                
+                if best_for_regime is None or best_gen.fitness > best_for_regime.fitness:
+                    best_for_regime = best_gen
+                
+                # Selection & Crossover
+                survivors = self.population[:int(POPULATION_SIZE*0.4)]
+                new_pop = survivors[:]
+                while len(new_pop) < POPULATION_SIZE:
+                    p1 = random.choice(survivors)
+                    p2 = random.choice(survivors)
+                    child = p1.crossover(p2)
+                    child.mutate()
+                    new_pop.append(child)
+                self.population = new_pop
+                
+            best_strategies[regime] = best_for_regime
+            print(f"✅ Melhor para {regime}: {best_for_regime.winrate:.1f}% Winrate ({best_for_regime.trades} trades)")
             
-            if best_ever is None or best_gen.fitness > best_ever.fitness:
-                best_ever = best_gen
-            
-            # Select
-            survivors = self.population[:int(POPULATION_SIZE*0.4)] # Top 40%
-            
-            # Crossover/Repopulate
-            new_pop = survivors[:]
-            while len(new_pop) < POPULATION_SIZE:
-                p1 = random.choice(survivors)
-                p2 = random.choice(survivors)
-                child = p1.crossover(p2)
-                child.mutate()
-                new_pop.append(child)
-            
-            self.population = new_pop
-            
-        print(f"\nMelhor Estratégia Evoluída: {best_ever}")
-        return best_ever
+        return best_strategies
 
 if __name__ == "__main__":
     opt = EvolutionaryOptimizer()
-    best = opt.evolve()
+    strategies = opt.evolve()
+    print(strategies)
+

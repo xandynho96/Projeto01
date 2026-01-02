@@ -1,0 +1,93 @@
+2025-12-30 01:30:43,486 - INFO - === LAUNCHER STARTED ===
+2025-12-30 01:30:43,487 - INFO - Current Directory: C:\Users\xande\OneDrive\Desktop\cript agent
+2025-12-30 01:30:43,487 - INFO - Importing dependencies...
+2025-12-30 01:30:48,151 - DEBUG - Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2025-12-30 01:30:48,609 - DEBUG - Creating converter from 7 to 5
+2025-12-30 01:30:48,609 - DEBUG - Creating converter from 5 to 7
+2025-12-30 01:30:48,609 - DEBUG - Creating converter from 7 to 5
+2025-12-30 01:30:48,610 - DEBUG - Creating converter from 5 to 7
+2025-12-30 01:30:50,120 - DEBUG - matplotlib data path: C:\Users\xande\AppData\Roaming\Python\Python313\site-packages\matplotlib\mpl-data
+2025-12-30 01:30:50,127 - DEBUG - CONFIGDIR=C:\Users\xande\.matplotlib
+2025-12-30 01:30:50,128 - DEBUG - interactive is False
+2025-12-30 01:30:50,129 - DEBUG - platform is win32
+2025-12-30 01:30:50,171 - DEBUG - CACHEDIR=C:\Users\xande\.matplotlib
+2025-12-30 01:30:50,173 - DEBUG - Using fontManager instance from C:\Users\xande\.matplotlib\fontlist-v390.json
+2025-12-30 01:30:51,816 - INFO - Dependencies imported successfully.
+2025-12-31 21:38:26,288 - INFO - === LAUNCHER STARTED ===
+2025-12-31 21:38:26,288 - INFO - Current Directory: C:\Users\xande\OneDrive\Desktop\cript agent
+2025-12-31 21:38:26,289 - INFO - Launcher initialized.
+2025-12-31 21:38:45,325 - INFO - Starting Optimization Loop...
+2025-12-31 21:38:56,568 - DEBUG - Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2025-12-31 21:38:58,338 - DEBUG - Creating converter from 7 to 5
+2025-12-31 21:38:58,338 - DEBUG - Creating converter from 5 to 7
+2025-12-31 21:38:58,338 - DEBUG - Creating converter from 7 to 5
+2025-12-31 21:38:58,338 - DEBUG - Creating converter from 5 to 7
+2025-12-31 21:39:02,183 - DEBUG - matplotlib data path: C:\Users\xande\AppData\Roaming\Python\Python313\site-packages\matplotlib\mpl-data
+2025-12-31 21:39:02,193 - DEBUG - CONFIGDIR=C:\Users\xande\.matplotlib
+2025-12-31 21:39:02,194 - DEBUG - interactive is False
+2025-12-31 21:39:02,195 - DEBUG - platform is win32
+2025-12-31 21:39:02,270 - DEBUG - CACHEDIR=C:\Users\xande\.matplotlib
+2025-12-31 21:39:02,290 - DEBUG - Using fontManager instance from C:\Users\xande\.matplotlib\fontlist-v390.json
+2025-12-31 21:39:12,182 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2025-12-31 21:39:15,935 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2025-12-31 21:39:37,486 - DEBUG - Creating converter from 5 to 3
+2025-12-31 21:47:41,314 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2025-12-31 21:47:45,062 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2025-12-31 21:56:25,741 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2025-12-31 21:56:28,346 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2025-12-31 22:05:50,824 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2025-12-31 22:05:54,907 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 18:43:55,523 - INFO - === LAUNCHER STARTED ===
+2026-01-01 18:43:55,524 - INFO - Current Directory: C:\Users\xande\OneDrive\Desktop\cript agent
+2026-01-01 18:43:55,524 - INFO - Launcher initialized.
+2026-01-01 18:44:04,118 - INFO - Starting Optimization Loop...
+2026-01-01 18:44:20,217 - DEBUG - Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2026-01-01 18:44:21,566 - DEBUG - Creating converter from 7 to 5
+2026-01-01 18:44:21,566 - DEBUG - Creating converter from 5 to 7
+2026-01-01 18:44:21,566 - DEBUG - Creating converter from 7 to 5
+2026-01-01 18:44:21,566 - DEBUG - Creating converter from 5 to 7
+2026-01-01 18:44:24,368 - DEBUG - matplotlib data path: C:\Users\xande\AppData\Roaming\Python\Python313\site-packages\matplotlib\mpl-data
+2026-01-01 18:44:24,384 - DEBUG - CONFIGDIR=C:\Users\xande\.matplotlib
+2026-01-01 18:44:24,385 - DEBUG - interactive is False
+2026-01-01 18:44:24,385 - DEBUG - platform is win32
+2026-01-01 18:44:24,484 - DEBUG - CACHEDIR=C:\Users\xande\.matplotlib
+2026-01-01 18:44:24,495 - DEBUG - Using fontManager instance from C:\Users\xande\.matplotlib\fontlist-v390.json
+2026-01-01 18:44:33,514 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 18:44:34,900 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 18:44:57,734 - DEBUG - Creating converter from 5 to 3
+2026-01-01 18:56:02,996 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 18:56:04,173 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 19:07:45,445 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 19:07:46,655 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 19:21:40,596 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 19:21:41,749 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 19:34:06,507 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 19:34:07,958 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 19:49:22,867 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 19:49:24,156 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 21:28:48,393 - INFO - Starting Optimization Loop...
+2026-01-01 21:28:48,741 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 21:28:49,543 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 21:34:26,125 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 21:34:26,933 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 22:09:35,679 - DEBUG - Starting new HTTPS connection (1): api.deepseek.com:443
+2026-01-01 22:09:36,602 - DEBUG - https://api.deepseek.com:443 "POST /chat/completions HTTP/1.1" 200 None
+2026-01-01 22:12:44,582 - INFO - Stopping optimization...
+2026-01-01 22:18:29,516 - INFO - === LAUNCHER STARTED ===
+2026-01-01 22:18:29,516 - INFO - Current Directory: C:\Users\xande\OneDrive\Desktop\cript agent
+2026-01-01 22:18:29,517 - INFO - Launcher initialized.
+2026-01-01 22:18:35,932 - INFO - Starting Optimization Loop...
+2026-01-01 22:18:37,846 - DEBUG - Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2026-01-01 22:18:38,351 - DEBUG - Creating converter from 7 to 5
+2026-01-01 22:18:38,351 - DEBUG - Creating converter from 5 to 7
+2026-01-01 22:18:38,351 - DEBUG - Creating converter from 7 to 5
+2026-01-01 22:18:38,351 - DEBUG - Creating converter from 5 to 7
+2026-01-01 22:18:39,122 - DEBUG - matplotlib data path: C:\Users\xande\AppData\Roaming\Python\Python313\site-packages\matplotlib\mpl-data
+2026-01-01 22:18:39,127 - DEBUG - CONFIGDIR=C:\Users\xande\.matplotlib
+2026-01-01 22:18:39,128 - DEBUG - interactive is False
+2026-01-01 22:18:39,128 - DEBUG - platform is win32
+2026-01-01 22:18:39,151 - DEBUG - CACHEDIR=C:\Users\xande\.matplotlib
+2026-01-01 22:18:39,152 - DEBUG - Using fontManager instance from C:\Users\xande\.matplotlib\fontlist-v390.json
+2026-01-01 22:18:45,791 - DEBUG - Creating converter from 5 to 3
+2026-01-02 07:37:50,671 - INFO - Stopping optimization...
+2026-01-02 07:37:50,815 - INFO - FATAL ERROR in main loop: 

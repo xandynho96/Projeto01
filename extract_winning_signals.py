@@ -8,93 +8,137 @@ class WinningSignalExtractor:
     def __init__(self):
         self.brain = None
         
-    def determine_regime(self, candle):
-        price = candle['close']
-        ema_50 = candle['ema_50']
-        ema_200 = candle['ema_200']
-        adx = candle['adx']
-        
-        if adx < 20: return "SIDEWAYS"
-        elif price > ema_50 and ema_50 > ema_200: return "UPTREND"
-        elif price < ema_50 and ema_50 < ema_200: return "DOWNTREND"
-        else: return "SIDEWAYS"
+    # determine_regime removed in favor of MarketRegime class
+
 
     def extract(self, strategy_genome=None):
         print("Carregando Dados para Extração...")
         dm = DataManager()
-        df = dm.get_data_from_db(limit=20000)
+        df = dm.get_data_from_db(limit=50000) # Increased limit to match Evolution
         df = df[df['timeframe'] == '1m'].copy()
         
         print("Calculando Indicadores...")
         ta = TechnicalAnalysis(df)
         df = ta.add_all_indicators()
+        
+        # Add Regimes
+        from market_regime import MarketRegime
+        mr = MarketRegime()
+        df = mr.add_regime_column(df)
+        
         df.dropna(inplace=True)
         
-        print("Simulando Estratégias para Encontrar Vencedores (Candidatos)...")
-        winners = []
+        print("Simulando Estratégias para Encontrar Vencedores (Otimizado via Numpy)...")
+        from fast_vector import calculate_outcomes_vectorized
         
-        # Test on as much data as possible
-        test_data = df.copy()
+        # 1. Vectorized Outcome Calculation (The heavy lifting)
+        # Returns boolean array where True = This candle WOULD hit TP before SL
+        winners_mask = calculate_outcomes_vectorized(
+            df, 
+            tp=0.0014, 
+            sl=0.0004, 
+            lookahead=60
+        )
         
-        for i in range(60, len(test_data)):
-            # Future looking for outcome
-            if i + 10 >= len(test_data): break
+        # 2. Filter Candidates (Only process those that are potential winners)
+        # We need the indices of True values
+        potential_winner_indices = np.where(winners_mask)[0]
+        
+        # We need to intersect this with the Strategy Logic
+        # Strategy Logic: Does the candle meet the entry criteria?
+        
+        final_winners = []
+        
+        # Convert df to records for fast iteration (or use itertuples)
+        # But we need random access by integer index? No, we have indices.
+        
+        # Optimization: Use DataFrame Query for Strategy if possible
+        # Iterate only potential winners?
+        # Or better: Apply Strategy Filter to ALL data, then intersect with Winners.
+        
+        # --- CANDIDATE SELECTION ---
+        # We want to find candles that match EITHER the Evolved Strategy OR the User Strategies
+        
+        candidates_indices = []
+        
+        # 1. EVOLVED STRATEGIES (Context-Aware)
+        if hasattr(strategy_genome, 'keys'): # Check if it's a dict (Strategies per Regime)
+            strategies_dict = strategy_genome
+            print("Aplicando Estratégias Contextuais (Uptrend/Downtrend/Sideways)...")
             
-            entry_price = test_data.iloc[i]['close']
+            for regime_name, genome in strategies_dict.items():
+                if not genome: continue
+                
+                # Build query for this regime + genome logic
+                query_parts = [f"(regime == '{regime_name}')"]
+                
+                for gene in genome.genes:
+                    query_parts.append(f"({gene.indicator} {gene.operator} {gene.threshold})")
+                
+                query_str = " & ".join(query_parts)
+                try:
+                    evolved_candidates = df.query(query_str).index
+                    candidates_indices.append(evolved_candidates)
+                    print(f"   -> {regime_name}: {len(evolved_candidates)} sinais.")
+                except Exception as e:
+                    print(f"Erro ao filtrar regime {regime_name}: {e}")
+
+        elif strategy_genome: # Legacy single genome support
+            # Fallback for old calls or single genome
+            pass 
+        
+        # 2. USER STRATEGIES (Always applied to enrich dataset)
+        print("Aplicando Estratégias do Usuário (Trend Sniper, Breakout, Fib Zone)...")
+        
+        # Trend Sniper
+        c_sniper = (
+            (df['adx'] > 15) &
+            (df['close'] > df['ema_50']) &
+            (df['close'] <= df['ema_9']) &
+            (df['rsi'] > 40) & (df['rsi'] < 65)
+        )
+        
+        # Momentum Breakout
+        c_breakout = (
+            (df['adx'] > 30) &
+            (df['close'] > df['bb_high']) &
+            (df['rsi'] > 60) & (df['rsi'] < 85)
+        )
+        
+        # Fibonacci Golden Zone
+        c_fib = (
+            (df['adx'] > 20) &
+            (df['stoch_rsi_k'] < 0.2) &
+            (df['close'] >= df['fib_500']) & 
+            (df['close'] <= df['fib_618'])
+        )
+        
+        user_strategy_mask = c_sniper | c_breakout | c_fib
+        user_candidates = df[user_strategy_mask].index
+        candidates_indices.append(user_candidates)
+        
+        # UNION of all candidates
+        if candidates_indices:
+            all_candidates = candidates_indices[0]
+            for idx in candidates_indices[1:]:
+                all_candidates = all_candidates.union(idx)
+        else:
+            all_candidates = []
             
-            # Check next 60 candles
-            future = test_data.iloc[i+1:i+61]
+        # INTERSECT with Real Winners (The Oracle)
+        # map potential_winner_indices (integer) to datetime index
+        winner_dt_map = df.index[potential_winner_indices]
+        
+        if len(all_candidates) > 0:
+            final_winners = winner_dt_map.intersection(all_candidates)
+        else:
+            final_winners = []
             
-            hit_tp = False
-            hit_sl = False
-            
-            tp_target = 0.0014 # 0.14% (User Request)
-            sl_target = 0.0004 # 0.04% (User Request)
-            
-            for idx, row in future.iterrows():
-                high = row['high']
-                low = row['low']
-                
-                gain = (high - entry_price) / entry_price
-                loss = (low - entry_price) / entry_price
-                
-                if loss < -sl_target: # SL Hit
-                    hit_sl = True
-                    break 
-                
-                if gain > tp_target: # TP Hit
-                    hit_tp = True
-                    break
-            
-            if hit_tp and not hit_sl:
-                # Winner! Now check if it was a valid setup 
-                current_candle = test_data.iloc[i]
-                
-                is_valid_setup = False
-                
-                if strategy_genome:
-                    # Use the Evolved Strategy
-                    if strategy_genome.check_signal(current_candle):
-                        is_valid_setup = True
-                else:
-                    # Fallback to defaults (or hardcoded)
-                    # --- STRATEGY DEFINITIONS ---
-                    # 1. Stoch Reversion (Reversão de Estocástico)
-                    strat_stoch = current_candle['stoch_k'] < 25
-                    # 2. Aggressive Trend (Tendência Agressiva)
-                    strat_trend = (current_candle['rsi'] > 55) and (current_candle['close'] > current_candle['ema_9'])
-                    
-                    if strat_stoch or strat_trend:
-                        is_valid_setup = True
-                
-                if is_valid_setup:
-                    winners.append(test_data.index[i]) 
-                    
-        print(f"Encontrados {len(winners)} setups vencedores compatíveis.")
+        print(f"Encontrados {len(final_winners)} setups vencedores compatíveis.")
         
         # Save to CSV
         df['target'] = 0
-        df.loc[winners, 'target'] = 1
+        df.loc[final_winners, 'target'] = 1
         
         # Save dataset
         df.to_csv("training_data_filtered.csv")

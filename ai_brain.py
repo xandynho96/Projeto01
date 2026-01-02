@@ -8,13 +8,15 @@ import requests
 import json
 import os
 import joblib
-import config
+import script_utils # Import helper
 
 class AIBrain:
     def __init__(self, model_path='bitcoin_ai_model.keras', scaler_path='scaler.pkl', classifier_path='bitcoin_ai_classifier.keras'):
-        self.model_path = model_path
-        self.classifier_path = classifier_path
-        self.scaler_path = scaler_path
+        # Resolve paths using resource_path for PyInstaller compatibility
+        self.model_path = script_utils.resource_path(model_path)
+        self.classifier_path = script_utils.resource_path(classifier_path)
+        self.scaler_path = script_utils.resource_path(scaler_path)
+
         self.scaler = self._load_or_create_scaler()
         self.model = self._load_or_create_model()
         self.classifier = self._load_or_create_classifier()
@@ -72,11 +74,17 @@ class AIBrain:
         return model
 
     def prepare_data(self, df):
-        # Feature selection
-        features = ['close', 'rsi', 'macd', 'bb_width', 'adx'] # Add more as needed
+        # Feature selection (Normalized)
+        # 1. Calculate Returns to fix "AI Blindness"
+        df['returns'] = df['close'].pct_change()
+        df.replace([np.inf, -np.inf], 0, inplace=True)
+        df.fillna(0, inplace=True)
+        
+        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx']
         data = df[features].values
         
         # Scale data
+        # Note: 'returns' is small (0.01), RSI is large (50). Scaler handles this.
         scaled_data = self.scaler.fit_transform(data)
         
         X, y = [], []
@@ -110,7 +118,14 @@ class AIBrain:
             return None
             
         # Prepare last sequence
-        features = ['close', 'rsi', 'macd', 'bb_width', 'adx']
+        # Prepare last sequence
+        # Calculate returns on the fly (need history)
+        if 'returns' not in df.columns:
+            df['returns'] = df['close'].pct_change()
+            df.replace([np.inf, -np.inf], 0, inplace=True)
+            df.fillna(0, inplace=True)
+
+        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx']
         data = df[features].values
         
         if len(data) < self.sequence_length:
@@ -138,7 +153,17 @@ class AIBrain:
             print("Model not trained yet.")
             return None
             
-        features = ['close', 'rsi', 'macd', 'bb_width', 'adx']
+        if self.model is None:
+            print("Model not trained yet.")
+            return None
+
+        # Add returns if missing
+        if 'returns' not in df.columns:
+            df['returns'] = df['close'].pct_change()
+            df.replace([np.inf, -np.inf], 0, inplace=True)
+            df.fillna(0, inplace=True)
+            
+        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx']
         data = df[features].values
         
         # Scale
@@ -185,7 +210,16 @@ class AIBrain:
             # Try to build/load? For now return 0.5 neutral
             return 0.5
             
-        features = ['close', 'rsi', 'macd', 'bb_width', 'adx']
+        # Add returns if missing (though predict_proba receives slice usually)
+        # If df is DataFrame slice
+        if 'returns' not in df.columns:
+             # pct_change on a slice might be wrong for the first element (NaN)
+             # Ideally we pass larger slice and take last
+             df['returns'] = df['close'].pct_change()
+             df.replace([np.inf, -np.inf], 0, inplace=True)
+             df.fillna(0, inplace=True)
+             
+        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx']
         data = df[features].values
         
         scaled_data = self.scaler.transform(data)

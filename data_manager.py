@@ -24,6 +24,7 @@ class MarketData(Base):
 class DataManager:
     def __init__(self, db_url=config.DB_URL):
         self.engine = create_engine(db_url)
+        print(f"🔌 Database Connection: {self.engine.url}")
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         self.exchange = ccxt.kraken()
@@ -35,6 +36,8 @@ class DataManager:
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit, since=since)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            if not df.empty:
+                 self.save_data(df, symbol, timeframe)
             return df
         except Exception as e:
             print(f"Error fetching data: {e}")
@@ -64,29 +67,33 @@ class DataManager:
                     print(f"Warning: 1h data limited to last 730 days. Adjusting start date.")
                     start_date_str = limit_date.strftime("%Y-%m-%d")
 
-            # YFinance 1m data limit check (7 days usually, safe 5 days)
+            # YFinance 1m data limit check (7 days strict)
             if interval == '1m':
-                # Yahoo Finance limits 1m data to the last 7 days (sometimes 30 depending on provider quirks, staying safe with 7)
+                print("ℹ️ Note: 1m data on YFinance is strictly limited to the last 7 days.")
                 limit_date = datetime.now() - pd.Timedelta(days=7)
-                try:
-                    start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
-                    if start_dt < limit_date:
-                        print(f"Warning: 1m data limited to last 7 days. Adjusting start date.")
-                        start_date_str = limit_date.strftime("%Y-%m-%d")
-                except ValueError:
-                    # If start_date_str is already just a date object or formatted differently
-                    pass
+                # Force start date to be within limit
+                start_date_str = limit_date.strftime("%Y-%m-%d")
+                print(f"🔄 Adjusting start date to {start_date_str} for 1m interval.")
             
             # Download
-            df_yf = yf.download(yf_symbol, start=start_date_str, interval=interval, progress=False)
+            print(f"⬇️ Downloading {interval} data for {yf_symbol} starting {start_date_str}...")
+            df_yf = yf.download(yf_symbol, start=start_date_str, interval=interval, progress=False, auto_adjust=True)
             
             if df_yf.empty:
-                print("No data found on YFinance.")
-                return
+                print(f"❌ No data found on YFinance for {yf_symbol} (Interval: {interval}).")
+                # Fallback: Try fetching recent data from Kraken directly via CCXT as backup
+                print("🔄 Trying direct Kraken fetch for recent data...")
+                return self.fetch_historical_data(symbol, timeframe, limit=1440*7) # Try to get last ~7 days from Kraken directly via API
+
 
             # Flatten MultiIndex columns if present (common in new yfinance)
+            # Flatten MultiIndex columns if present (common in new yfinance)
             if isinstance(df_yf.columns, pd.MultiIndex):
-                df_yf.columns = df_yf.columns.get_level_values(0)
+                # Check if it's the new format with Ticker as level 1
+                if df_yf.columns.nlevels >= 2:
+                     df_yf.columns = df_yf.columns.get_level_values(0)
+                else:
+                    df_yf.reset_index(inplace=True) # Sometimes index is involved
 
             # Reset index to get Date/Datetime as column
             df_yf.reset_index(inplace=True)
@@ -113,13 +120,14 @@ class DataManager:
             df_final = df_yf[['timestamp', 'open', 'high', 'low', 'close', 'volume']].copy()
             
             # Save to DB
-            print(f"Downloaded {len(df_final)} candles. Saving to database...")
-            # Note: We use the requested 'timeframe' (e.g. 1m or 1h) as label, even if we map it to YF interval
+            print(f"✅ Downloaded {len(df_final)} candles from YFinance. Saving to database...")
             self.save_data(df_final, symbol, timeframe=timeframe)
             print("Bulk import complete.")
-            
+            return df_final
+
         except Exception as e:
             print(f"Error in bulk download: {e}")
+            return pd.DataFrame()
 
     def save_data(self, df, symbol=config.SYMBOL, timeframe=config.TIMEFRAME):
         """Saves DataFrame to SQLite database, avoiding duplicates."""

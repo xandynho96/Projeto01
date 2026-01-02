@@ -35,6 +35,21 @@ class TechnicalAnalysis:
         self.df['stoch_rsi_k'] = stoch_rsi.stochrsi_k()
         self.df['stoch_rsi_d'] = stoch_rsi.stochrsi_d()
 
+        # Money Flow Index (MFI)
+        self.df['mfi'] = ta.volume.MFIIndicator(
+            high=self.df['high'], low=self.df['low'], close=self.df['close'], volume=self.df['volume'], window=14
+        ).money_flow_index()
+        
+        # Commodity Channel Index (CCI)
+        self.df['cci'] = ta.trend.CCIIndicator(
+            high=self.df['high'], low=self.df['low'], close=self.df['close'], window=20
+        ).cci()
+        
+        # Williams %R
+        self.df['williams_r'] = ta.momentum.WilliamsRIndicator(
+            high=self.df['high'], low=self.df['low'], close=self.df['close'], lbp=14
+        ).williams_r()
+
     def _add_trend_indicators(self):
         # MACD
         macd = ta.trend.MACD(close=self.df['close'])
@@ -168,6 +183,30 @@ class TechnicalAnalysis:
             (body > 0)
         )
         self.df['pattern_shooting_star'] = is_shooting_star
+
+        # Marubozu (Strong Candle)
+        # Large body, very small shadows
+        # Body > 2x average body (approx) or just large relative to shadows
+        is_marubozu = (
+            (body > (high - low) * 0.8) & # Body is 80% of total range
+            (body > 0)
+        )
+        self.df['pattern_marubozu'] = is_marubozu
+
+        # ADX Slope (Trend Strength Change)
+        # Using shift(1) to see immediate change
+        self.df['adx_slope'] = self.df['adx'].diff()
+
+        # Distance to Donchian Channel (Support/Resistance)
+        # Support = Lowest Low of last 20
+        # Resistance = Highest High of last 20
+        window_sr = 20
+        support = self.df['low'].rolling(window=window_sr).min()
+        resistance = self.df['high'].rolling(window=window_sr).max()
+        
+        # Distance (normalized by close)
+        self.df['dist_support'] = (self.df['close'] - support) / self.df['close']
+        self.df['dist_resistance'] = (resistance - self.df['close']) / self.df['close']
 
     def _add_fibonacci_levels(self):
         # Calculates Fibonacci retracements based on the last N periods high/low
