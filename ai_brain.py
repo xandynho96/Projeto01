@@ -75,6 +75,9 @@ class AIBrain:
 
     def prepare_data(self, df):
         # Feature selection (Normalized)
+        # Create a copy to avoid SettingWithCopyWarning
+        df = df.copy()
+        
         # 1. Calculate Returns to fix "AI Blindness"
         df['returns'] = df['close'].pct_change()
         df.replace([np.inf, -np.inf], 0, inplace=True)
@@ -121,6 +124,7 @@ class AIBrain:
         # Prepare last sequence
         # Calculate returns on the fly (need history)
         if 'returns' not in df.columns:
+            df = df.copy()
             df['returns'] = df['close'].pct_change()
             df.replace([np.inf, -np.inf], 0, inplace=True)
             df.fillna(0, inplace=True)
@@ -159,6 +163,7 @@ class AIBrain:
 
         # Add returns if missing
         if 'returns' not in df.columns:
+            df = df.copy()
             df['returns'] = df['close'].pct_change()
             df.replace([np.inf, -np.inf], 0, inplace=True)
             df.fillna(0, inplace=True)
@@ -215,6 +220,7 @@ class AIBrain:
         if 'returns' not in df.columns:
              # pct_change on a slice might be wrong for the first element (NaN)
              # Ideally we pass larger slice and take last
+             df = df.copy()
              df['returns'] = df['close'].pct_change()
              df.replace([np.inf, -np.inf], 0, inplace=True)
              df.fillna(0, inplace=True)
