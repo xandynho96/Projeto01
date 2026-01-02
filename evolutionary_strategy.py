@@ -28,16 +28,16 @@ THRESHOLDS = {
     'mfi': (20, 80),
     'williams_r': (-90, -10),
     'dist_ema_200': (-0.05, 0.05), # Float
-    'dist_bb_lower': (-0.02, 0.02), # Float
-    'pattern_bullish_engulfing': (0.5, 1.5), 
-    'pattern_hammer': (0.5, 1.5),
-    'obv_slope': (-1000, 1000), # Volume change
-    'supertrend': (0.5, 1.5), # Boolean 1 or 0
-    'pattern_marubozu': (0.5, 1.5),
-    'adx_slope': (-5, 5),
-    'dist_support': (0, 0.1),
-    'dist_resistance': (0, 0.1),
-    'bb_width': (0, 0.5)
+    'dist_bb_lower': (-0.05, 0.05), # Float
+    'pattern_bullish_engulfing': (0.5, 0.5), # Fixed threshold for bool, operator determines 0 or 1
+    'pattern_hammer': (0.5, 0.5),
+    'obv_slope': (-100, 100), # Adjusted scale
+    'supertrend': (0.5, 0.5), # Boolean
+    'pattern_marubozu': (0.5, 0.5),
+    'adx_slope': (-2, 2),
+    'dist_support': (0, 0.05),
+    'dist_resistance': (0, 0.05),
+    'bb_width': (0.01, 0.5)
 }
 
 class StrategyGene:
@@ -138,7 +138,25 @@ class EvolutionaryOptimizer:
             
     def initialize_population(self):
         self.population = []
-        # 2. Fill with Random (DeepSeek removed for simplicity in this specific scope, can be re-added)
+        
+        # 1. Add SEEDS (Known good strategies to jumpstart evolution)
+        # Prevents "0% Winrate" stagnation by providing viable parents
+        seeds = [
+            # RSI Oversold
+            Genome([StrategyGene('rsi', '<', 30)]),
+            # Trend Pullback
+            Genome([StrategyGene('dist_ema_200', '>', 0.001), StrategyGene('rsi', '<', 40)]),
+            # Bollinger Breakout
+            Genome([StrategyGene('bb_width', '>', 0.05), StrategyGene('dist_bb_lower', '<', 0.001)]),
+            # Stochastic Reversion
+            Genome([StrategyGene('stoch_k', '<', 20), StrategyGene('adx', '>', 20)]),
+            # Momentum
+            Genome([StrategyGene('rsi', '>', 55), StrategyGene('adx', '>', 25)])
+        ]
+        
+        self.population.extend(seeds)
+        
+        # 2. Fill rest with Random
         while len(self.population) < POPULATION_SIZE:
              self.population.append(Genome())
         
