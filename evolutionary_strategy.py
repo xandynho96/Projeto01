@@ -136,10 +136,54 @@ class EvolutionaryOptimizer:
             
             self.df.dropna(inplace=True)
             
-    def initialize_population(self):
+    def initialize_population(self, regime=None):
         self.population = []
         
-        # 1. Add SEEDS (Known good strategies to jumpstart evolution)
+        # 1. AI SEEDS (DeepSeek)
+        # Attempt to get "Smart" seeds first
+        try:
+            from llm_strategy import DeepSeekStrategist
+            strategist = DeepSeekStrategist()
+            
+            # Context description for LLM
+            regime_desc = {
+                'UPTREND': "Market is bullish. Look for pullbacks or breakouts.",
+                'DOWNTREND': "Market is bearish. Look for short opportunities.",
+                'SIDEWAYS': "Market is ranging. Look for mean reversion.",
+                'HIGH_VOL': "Extreme volatility. Be careful, wide stops."
+            }.get(regime, "General market conditions")
+            
+            # Ask for 3 smart strategies
+            ai_strategies = strategist.generate_strategies(
+                INDICATORS, 
+                count=3, 
+                market_regime=regime if regime else "SIDEWAYS",
+                description=regime_desc
+            )
+            
+            for strat_dict in ai_strategies:
+                genes = []
+                for cond in strat_dict.get('conditions', []):
+                    # Map JSON to Gene
+                    # "indicator": "rsi", "operator": "<", "threshold": 30
+                    ind = cond['indicator']
+                    op = cond['operator']
+                    th = cond['threshold']
+                    
+                    # Basic validation to ensure indicator exists in our list
+                    if ind in INDICATORS:
+                        genes.append(StrategyGene(ind, op, th))
+                
+                if genes:
+                    # Create Genome from AI Genes
+                    genome = Genome(genes)
+                    self.population.append(genome)
+                    print(f"🤖 Estratégia IA Adicionada: {genome}")
+                    
+        except Exception as e:
+            print(f"⚠️ Falha ao obter estratégias da IA: {e}")
+
+        # 2. Add HARDCODED SEEDS (Fallback/Baseline)
         # Prevents "0% Winrate" stagnation by providing viable parents
         seeds = [
             # RSI Oversold
@@ -156,9 +200,22 @@ class EvolutionaryOptimizer:
         
         self.population.extend(seeds)
         
-        # 2. Fill rest with Random
+        # 3. Fill rest with VARIATIONS of Seeds (Smart Initialization)
+        # User Constraint: "Never create random strategies"
+        # Solution: Fill the rest of the population by mutating the intelligent seeds
         while len(self.population) < POPULATION_SIZE:
-             self.population.append(Genome())
+             if self.population:
+                 # Pick a parent from the existing seeds using a weighted choice (simulate 'survival of the fittest' bias even at start)
+                 # or just simple random choice from the good seeds
+                 parent = random.choice(self.population[:len(seeds) + len(ai_strategies) if 'ai_strategies' in locals() else len(seeds)])
+                 
+                 # Clone and Mutate
+                 child = Genome(genes=[StrategyGene(g.indicator, g.operator, g.threshold) for g in parent.genes])
+                 child.mutate() # Slight variation
+                 self.population.append(child)
+             else:
+                 # Fallback if NO seeds exist (should unlikely happen)
+                 self.population.append(Genome())
         
     def pre_calculate_outcomes(self):
         print("Pré-calculando resultados futuros (Otimização Vetorizada)...")
@@ -233,7 +290,7 @@ class EvolutionaryOptimizer:
         
         for regime in regimes:
             print(f"\n🌊 Evoluindo Estratégia para regime: {regime}...")
-            self.initialize_population()
+            self.initialize_population(regime=regime)
             best_for_regime = None
             
             for gen in range(GENERATIONS):
