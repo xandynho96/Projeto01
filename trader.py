@@ -11,13 +11,25 @@ import config
 from logger import setup_logger
 
 class BitcoinTrader:
-    def __init__(self):
+    def __init__(self, api_key=None, secret=None, user_settings={}):
         self.logger = setup_logger()
         self.logger.info("Initializing Bitcoin Trader...")
         self.dm = DataManager()
+        
+        # Connect if keys provided
+        if api_key and secret:
+            demo_mode = user_settings.get('demo_mode', False)
+            self.dm.connect_exchange(api_key, secret, demo_mode=demo_mode)
+            
+        self.user_settings = user_settings
         self.brain = AIBrain()
         # Ensure we have a trained model or train on startup
         self._initial_training()
+        
+        # Set Leverage if provided
+        leverage = float(user_settings.get('leverage', config.LEVERAGE))
+        if leverage > 1:
+            self.dm.set_leverage(leverage)
 
     def _initial_training(self):
         self.logger.info("Performing initial data fetch and training...")
@@ -64,24 +76,105 @@ class BitcoinTrader:
         predicted_price = self.brain.predict(df)
         
         if predicted_price is None:
-            self.logger.warning("AI could not make a prediction.")
-            return
-
-        self.logger.info(f"Current Price: {current_price:.2f}")
-        self.logger.info(f"Predicted (1h): {predicted_price:.2f}")
-        
-        # 5. Trading Logic (Simplified)
-        # Threshold: if predicted price is > 0.5% higher
-        change_percent = ((predicted_price - current_price) / current_price) * 100
-        self.logger.info(f"Expected Change: {change_percent:.2f}%")
-        
-        signal = "HOLD"
-        if change_percent > 0.5:
-            signal = "BUY"
-        elif change_percent < -0.5:
-            signal = "SELL"
+            self.logger.warning("AI could not make a prediction. Switching to Technical Analysis Fallback.")
+            # Fallback Logic: Use current price as base and let Signals decide
+            predicted_price = current_price 
+            
+            # Simple TA Strategy Fallback
+            rsi = df['rsi'].iloc[-1]
+            if rsi < 30:
+                signal = "buy"
+                self.logger.info("Fallback Strategy: RSI Oversold (<30) -> BUY Signal")
+            elif rsi > 70:
+                signal = "sell"
+                self.logger.info("Fallback Strategy: RSI Overbought (>70) -> SELL Signal")
+            else:
+                 signal = "HOLD"
+                 self.logger.info(f"Fallback Strategy: RSI Neutral ({rsi:.2f}) -> HOLD")
+                 return # Exit if HOLD
+        else:
+             # Normal AI Logic
+             self.logger.info(f"Current Price: {current_price:.2f}")
+             self.logger.info(f"Predicted (1h): {predicted_price:.2f}")
+             
+             # Threshold: if predicted price is > 0.5% higher
+             change_percent = ((predicted_price - current_price) / current_price) * 100
+             self.logger.info(f"Expected Change: {change_percent:.2f}%")
+             
+             signal = "HOLD"
+             if change_percent > 0.5:
+                 signal = "buy"
+             elif change_percent < -0.5:
+                 signal = "sell"
             
         self.logger.info(f"DECISION: {signal}")
+        
+        if signal != "HOLD":
+             # Use User Settings
+             # 'amount' is now treated as USD value (e.g., 50.0)
+             amount_usd = float(self.user_settings.get('amount', 50.0))
+             
+             # Calculate BTC amount based on current price
+             amount_btc = amount_usd / current_price
+             # Ensure a minimum size (Kraken Futures min is roughly 0.0001 or $1 depending on contract, safe margin)
+             if amount_btc < 0.0001:
+                 self.logger.warning(f"Calculated amount {amount_btc:.6f} BTC ($ {amount_usd}) is too small. Adjusting to 0.0001")
+                 amount_btc = 0.0001
+                 
+             self.logger.info(f"Target Entry: ${amount_usd} (~{amount_btc:.5f} BTC)")
+
+             sl_pct = float(self.user_settings.get('sl_pct', 2.0))
+             tp_pct = float(self.user_settings.get('tp_pct', 4.0))
+             
+             # Calculate SL/TP Prices
+             # BUY: SL below, TP above
+             # SELL: SL above, TP below
+             
+             params = {}
+             # CCXT Unified approach for simple SL/TP (might vary by exchange implementation)
+             # Ideally we check exchange capabilities, but adding params is a good first step.
+             # Kraken Futures: 'stopLossPrice', 'takeProfitPrice' might work or need 'stopLoss' dictionary
+             
+             if signal == "buy":
+                 sl_price = current_price * (1 - sl_pct/100)
+                 tp_price = current_price * (1 + tp_pct/100)
+             else: # sell
+                 sl_price = current_price * (1 + sl_pct/100)
+                 tp_price = current_price * (1 - tp_pct/100)
+                 
+             # params = {'stopLossPrice': sl_price, 'takeProfitPrice': tp_price} 
+             
+             # Execute Entry (Market Order)
+             self.logger.info(f"🚀 Executing {signal.upper()} Entry for {amount_btc:.5f} BTC...")
+             entry_order = self.dm.execute_order(config.SYMBOL, signal, amount_btc, type='market')
+             
+             if entry_order:
+                 self.logger.info(f"✅ Entry Filled. ID: {entry_order['id']}")
+                 
+                 # Record trade to history
+                 self.dm.save_trade(
+                     symbol=config.SYMBOL, 
+                     side=signal, 
+                     amount=amount_btc, 
+                     price=current_price, 
+                     status='open'
+                 )
+                 
+                 # --- Place Exit Orders (Reduce Only) ---
+                 # Stop Loss
+                 sl_side = "sell" if signal == "buy" else "buy"
+                 sl_params = {'reduceOnly': True}
+                 self.logger.info(f"🛡️ Placing Stop Loss at {sl_price:.2f}...")
+                 self.dm.execute_order(config.SYMBOL, sl_side, amount_btc, type='stop', price=sl_price, params=sl_params)
+                 
+                 # Take Profit
+                 tp_side = "sell" if signal == "buy" else "buy"
+                 tp_params = {'reduceOnly': True}
+                 self.logger.info(f"💰 Placing Take Profit at {tp_price:.2f}...")
+                 self.dm.execute_order(config.SYMBOL, tp_side, amount_btc, type='take_profit', price=tp_price, params=tp_params)
+                 
+             else:
+                 self.logger.error("❌ Entry Order Failed.")
         
         # 6. Deepseek Validation (Optional)
         if signal != "HOLD":

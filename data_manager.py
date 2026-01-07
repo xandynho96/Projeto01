@@ -21,13 +21,66 @@ class MarketData(Base):
     close = Column(Float)
     volume = Column(Float)
 
+class Trade(Base):
+    __tablename__ = 'trades'
+    
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    symbol = Column(String)
+    side = Column(String) # buy/sell
+    amount = Column(Float)
+    price = Column(Float)
+    pnl = Column(Float, nullable=True)
+    status = Column(String) # open/closed
+
+class StrategyModel(Base):
+    __tablename__ = 'strategies'
+    
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    origin = Column(String) # evolution, ai, user
+    regime = Column(String) # UPTREND, DOWNTREND, SIDEWAYS
+    genes = Column(String) # JSON or String representation
+    winrate = Column(Float)
+    trades = Column(Integer)
+    fitness = Column(Float)
+
 class DataManager:
     def __init__(self, db_url=config.DB_URL):
         self.engine = create_engine(db_url)
         print(f"🔌 Database Connection: {self.engine.url}")
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
-        self.exchange = ccxt.kraken()
+        self.Session = sessionmaker(bind=self.engine)
+        self.exchange = None
+        
+        # Initial connection if keys are present (optional, can be overridden)
+        if config.KRAKEN_API_KEY:
+            self.connect_exchange(config.KRAKEN_API_KEY, config.KRAKEN_SECRET)
+
+    def connect_exchange(self, api_key, secret, demo_mode=False):
+        """Connects to Kraken Futures with provided keys."""
+        try:
+            exchange_config = {
+                'apiKey': api_key,
+                'secret': secret,
+                'enableRateLimit': True,
+            }
+            
+            if demo_mode:
+                self.exchange = ccxt.krakenfutures(exchange_config)
+                # Correct way to enable Sandbox/Demo environment in CCXT
+                print("⚠️  USING DEMO/SANDBOX ENVIRONMENT ⚠️")
+                self.exchange.set_sandbox_mode(True)
+            else:
+                self.exchange = ccxt.krakenfutures(exchange_config)
+            self.exchange.load_markets()
+            print("Connected to Kraken Futures.")
+            return True
+        except Exception as e:
+            print(f"Failed to connect to Kraken: {e}")
+            self.exchange = None
+            return False
         
     def fetch_historical_data(self, symbol=config.SYMBOL, timeframe=config.TIMEFRAME, limit=config.LIMIT, since=None):
         """Fetches historical OHLCV data from Kraken."""
@@ -41,7 +94,9 @@ class DataManager:
             return df
         except Exception as e:
             print(f"Error fetching data: {e}")
-            return pd.DataFrame()
+            if self.exchange and "does not have market symbol" in str(e):
+                print("DEBUG: Available Symbols:", [m for m in self.exchange.markets.keys() if 'BTC' in m or 'XBT' in m])
+            return pd.DataFrame() # Empty DF
 
     def fetch_full_history(self, start_year=2020, symbol=config.SYMBOL, timeframe=config.TIMEFRAME):
         """Fetches full history using yfinance for bulk data (bypassing Kraken limits)."""
@@ -149,7 +204,7 @@ class DataManager:
                     continue
                     
                 market_data = MarketData(
-                    timestamp=row['timestamp'],
+                    timestamp=row['timestamp'].to_pydatetime(),
                     symbol=symbol,
                     timeframe=timeframe,
                     open=row['open'],
@@ -181,6 +236,148 @@ class DataManager:
         except Exception as e:
             print(f"Error reading DB: {e}")
             return pd.DataFrame()
+
+    def set_leverage(self, leverage, symbol=config.SYMBOL):
+        """Sets leverage for the given symbol on Kraken Futures."""
+        if not self.exchange.apiKey:
+            return # Public mode only
+            
+        try:
+            # Kraken Futures often sets leverage per order or account config. 
+            # CCXT unify this setLeverage if supported.
+            # For Kraken Futures, we might need to be specific.
+            # Checking implicit support:
+            self.exchange.set_leverage(leverage, symbol)
+            print(f"Leverage set to {leverage}x for {symbol}")
+        except Exception as e:
+            print(f"Error setting leverage: {e}")
+
+    def execute_order(self, symbol, side, amount, type='market', price=None, params={}):
+        """Executes an order on Kraken Futures."""
+        if not self.exchange or not self.exchange.apiKey:
+            print("[SIMULATION] execute_order called without API keys.")
+            return None
+            
+        try:
+            print(f"Executing {side} {type} order for {amount} {symbol}...")
+            # For Kraken Futures, check if they support stopLoss/takeProfit in params of create_order
+            # Otherwise might need separate orders.
+            # CCXT unified params usually work for simple SL/TP if exchange supports 'stopLossPrice'/'takeProfitPrice'
+            
+            order = self.exchange.create_order(symbol, type, side, amount, price, params)
+            print(f"Order Executed: {order['id']}")
+            return order
+        except Exception as e:
+            print(f"Error executing order: {e}")
+            return None
+
+    def get_balance(self):
+        """Fetches total account balance (USD/USDT usually)"""
+        if not self.exchange or not self.exchange.apiKey:
+            return 0.0
+        
+        try:
+            balance = self.exchange.fetch_balance()
+            # Kraken Futures usually has 'total' in 'info' or specific keys like 'PF_USD' 
+            # CCXT usually maps 'total' -> {'USDT': ..., 'BTC': ...}
+            # Let's try to get total approximate USD value or free margin
+            
+            # Common structure: balance['total']['USD'] or balance['free']['USD']
+            # For simplicity, returning total USD collateral
+            if 'USD' in balance['total']:
+                return balance['total']['USD']
+            elif 'USDT' in balance['total']:
+                return balance['total']['USDT']
+            else:
+                # Fallback to total equity if available
+                return balance.get('info', {}).get('totalWalletBalance', 0.0) # Example key
+        except Exception as e:
+            print(f"Error fetching balance: {e}")
+            return 0.0
+
+    def save_trade(self, symbol, side, amount, price, status='open'):
+        """Saves a trade to the database."""
+        session = self.Session()
+        try:
+            trade = Trade(symbol=symbol, side=side, amount=amount, price=price, status=status)
+            session.add(trade)
+            session.commit()
+            print(f"Trade saved: {side} {amount} {symbol} @ {price}")
+        except Exception as e:
+            session.rollback()
+            print(f"Error saving trade: {e}")
+        finally:
+            session.close()
+
+    def get_recent_trades(self, limit=50):
+        """Fetches recent trades."""
+        session = self.Session()
+        try:
+            trades = session.query(Trade).order_by(Trade.timestamp.desc()).limit(limit).all()
+            # Convert to list of dicts for easy consumption
+            return [{
+                'id': t.id,
+                'time': t.timestamp,
+                'symbol': t.symbol,
+                'side': t.side,
+                'amt': t.amount,
+                'price': t.price,
+                'status': t.status
+            } for t in trades]
+        except Exception as e:
+            print(f"Error fetching trades: {e}")
+            return []
+        finally:
+            session.close()
+
+    def save_strategy(self, genome, origin='evolution', regime='ANY'):
+        """Saves a strategy genome to the database."""
+        session = self.Session()
+        try:
+            # Avoid saving duplicates (optional, based on genes string)
+            # For massive evolution, maybe only save if fitness > X?
+            # User wants to catalog created strategies.
+            
+            strat = StrategyModel(
+                origin=origin,
+                regime=regime,
+                genes=str(genome),
+                winrate=genome.winrate,
+                trades=genome.trades,
+                fitness=genome.fitness
+            )
+            session.add(strat)
+            session.commit()
+            # Assign ID back to genome if needed
+            if hasattr(genome, 'id'):
+                genome.id = strat.id
+            return strat.id
+        except Exception as e:
+            session.rollback()
+            print(f"Error saving strategy: {e}")
+            return None
+        finally:
+            session.close()
+            
+    def get_top_strategies(self, limit=50):
+        """Fetches top strategies by fitness."""
+        session = self.Session()
+        try:
+            # Order by fitness desc
+            strats = session.query(StrategyModel).order_by(StrategyModel.fitness.desc()).limit(limit).all()
+            return [{
+                'id': s.id,
+                'regime': s.regime,
+                'winrate': s.winrate,
+                'trades': s.trades,
+                'genes': s.genes,
+                'origin': s.origin
+            } for s in strats]
+        except Exception as e:
+            print(f"Error fetching strategies: {e}")
+            return []
+        finally:
+            session.close()
 
 if __name__ == "__main__":
     # Test the module

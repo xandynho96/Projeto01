@@ -2,6 +2,7 @@ import random
 import pandas as pd
 import numpy as np
 from technical_analysis import TechnicalAnalysis
+from technical_analysis import TechnicalAnalysis
 from data_manager import DataManager
 
 # --- CONFIG ---
@@ -107,6 +108,7 @@ class Genome:
 
 class EvolutionaryOptimizer:
     def __init__(self, df=None):
+        self.dm = DataManager()
         self.population = []
         if df is not None:
             self.df = df
@@ -153,12 +155,38 @@ class EvolutionaryOptimizer:
                 'HIGH_VOL': "Extreme volatility. Be careful, wide stops."
             }.get(regime, "General market conditions")
             
+            # --- Gather Context for Smart Generation ---
+            # 1. Market Metrics (Summary of last 500 candles roughly)
+            summary_df = self.df.tail(1000)
+            current_data_summary = {
+                "avg_rsi": float(summary_df['rsi'].mean()),
+                "avg_adx": float(summary_df['adx'].mean()),
+                "volatility": float(summary_df['bb_width'].mean()),
+                "recent_close": float(summary_df['close'].iloc[-1])
+            }
+            
+            # 2. Existing Strategies (Exclusion)
+            try:
+                top_strats = self.dm.get_top_strategies(limit=50) # Assuming this method exists or we add it to DataManager
+                existing_strategies = [s['genes'] for s in top_strats]
+            except:
+                existing_strategies = []
+                
+            # 3. Trade History (Performance Context)
+            try:
+                trade_history = self.dm.get_recent_trades(limit=20) # List of dicts
+            except:
+                trade_history = []
+            
             # Ask for 3 smart strategies
             ai_strategies = strategist.generate_strategies(
                 INDICATORS, 
                 count=3, 
                 market_regime=regime if regime else "SIDEWAYS",
-                description=regime_desc
+                description=regime_desc,
+                current_data_summary=current_data_summary,
+                existing_strategies=existing_strategies,
+                trade_history=trade_history
             )
             
             for strat_dict in ai_strategies:
@@ -321,8 +349,15 @@ class EvolutionaryOptimizer:
                 self.population = new_pop
                 
             best_strategies[regime] = best_for_regime
+            best_strategies[regime] = best_for_regime
             print(f"✅ Melhor para {regime}: {best_for_regime.winrate:.1f}% Winrate ({best_for_regime.trades} trades)")
             
+            # Save Best for Regime (or all if desired, user asked for cataloging)
+            # Let's save the Top 5 of the final generation for each regime to the catalog
+            for genome in self.population[:5]:
+                if genome.trades > 0:
+                   self.dm.save_strategy(genome, origin='evolution', regime=regime)
+
         return best_strategies
 
 if __name__ == "__main__":

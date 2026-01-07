@@ -2,22 +2,11 @@
 
 
 a = Analysis(
-    ['launcher.py'],
+    ['gui_app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[
-        'sklearn', 
-        'sklearn.neighbors.typedefs', 
-        'sklearn.utils._cython_blas', 
-        'numpy.random.common', 
-        'numpy.random.bounded_integers', 
-        'numpy.random.entropy', 
-        'joblib',
-        'concurrent.futures',
-        'pandas',
-        'ta'
-    ],
+    datas=[('dashboard.py', '.'), ('crypto_data.db', '.')],
+    hiddenimports=['pandas', 'numpy', 'sklearn', 'sklearn.utils._cython_blas', 'sklearn.neighbors.typedefs', 'sklearn.neighbors.quad_tree', 'sklearn.tree', 'sklearn.tree._utils', 'ta', 'ccxt', 'sqlalchemy', 'schedule', 'plotly', 'streamlit'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -40,7 +29,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
