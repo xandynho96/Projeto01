@@ -73,8 +73,17 @@ class BitcoinTrader:
 
         # 4. Get AI Prediction
         current_price = df['close'].iloc[-1]
-        predicted_price = self.brain.predict(df)
         
+        # New API returns 'predicted_return' (e.g. 0.005 for 0.5% up)
+        predicted_return = self.brain.get_prediction(df)
+        
+        # Calculate Target Price from Return
+        predicted_price = current_price * (1 + predicted_return)
+        
+        if (predicted_return == 0.0 and predicted_price == current_price):
+             # Try Fallback if return is exactly 0 (might mean no prediction made)
+             predicted_price = None
+
         if predicted_price is None:
             self.logger.warning("AI could not make a prediction. Switching to Technical Analysis Fallback.")
             # Fallback Logic: Use current price as base and let Signals decide
@@ -95,16 +104,21 @@ class BitcoinTrader:
         else:
              # Normal AI Logic
              self.logger.info(f"Current Price: {current_price:.2f}")
-             self.logger.info(f"Predicted (1h): {predicted_price:.2f}")
+             self.logger.info(f"Predicted Price (Next Candle): {predicted_price:.2f}")
+             self.logger.info(f"Predicted Return: {predicted_return*100:.4f}%")
              
-             # Threshold: if predicted price is > 0.5% higher
-             change_percent = ((predicted_price - current_price) / current_price) * 100
-             self.logger.info(f"Expected Change: {change_percent:.2f}%")
+             # Threshold: if predicted return is > 0.1% (High Frequency Scalping)
+             # User requested HFT Scalping so thresholds should be small.
+             # 0.5% was for 1h Timeframe. For 1m, 0.5% is huge. Lowering to 0.05% or 0.1%?
+             # Let's use 0.05% (0.0005) filter
+             
+             change_percent = predicted_return * 100
+             self.logger.info(f"Expected Change: {change_percent:.4f}%")
              
              signal = "HOLD"
-             if change_percent > 0.5:
+             if change_percent > 0.02: # Very sensitive for 1m scalping
                  signal = "buy"
-             elif change_percent < -0.5:
+             elif change_percent < -0.02:
                  signal = "sell"
             
         self.logger.info(f"DECISION: {signal}")

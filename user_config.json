@@ -1,0 +1,9 @@
+{
+    "api_key": "RwWAOMd5PBjh1XaacpIyEmXMLkE/GxRUvAoWZLrlvgEdyUJULl6tBV/y",
+    "secret": "in+9R4I4haEXhlPv9UjnD0Wsq4/FIskF/bOBfJPA741fl8YR+YqVSmm+iRDWCYZ8H3uDx2VCC/E63I6lDN3s3LCd",
+    "demo_mode": true,
+    "amount": 50.0,
+    "leverage": 50.0,
+    "sl_pct": 30.0,
+    "tp_pct": 70.0
+}

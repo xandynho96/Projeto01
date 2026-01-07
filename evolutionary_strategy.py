@@ -6,9 +6,9 @@ from technical_analysis import TechnicalAnalysis
 from data_manager import DataManager
 
 # --- CONFIG ---
-POPULATION_SIZE = 20
-GENERATIONS = 5
-CONDITIONS_PER_STRAT = 2 # Keep it simple for now (2 conditions per strategy)
+POPULATION_SIZE = 50
+GENERATIONS = 3
+CONDITIONS_PER_STRAT = 1 # Simplified for initial discovery
 
 INDICATORS = [
     'rsi', 'stoch_k', 'stoch_d', 'adx', 'cci', 'mfi', 'williams_r',
@@ -138,6 +138,9 @@ class EvolutionaryOptimizer:
             
             self.df.dropna(inplace=True)
             
+            print("Distribution of Regimes:")
+            print(self.df['regime'].value_counts())
+            
     def initialize_population(self, regime=None):
         self.population = []
         
@@ -231,32 +234,42 @@ class EvolutionaryOptimizer:
         # 3. Fill rest with VARIATIONS of Seeds (Smart Initialization)
         # User Constraint: "Never create random strategies"
         # Solution: Fill the rest of the population by mutating the intelligent seeds
+        # 4. SAFETY NET: Simple 1-Gene Validators
+        # Ensure we always have some super-simple strategies that definitely trigger matches
+        # e.g. RSI < 70 (Almost always true), just to get non-zero trades and establish a baseline
+        safety_net = [
+            Genome([StrategyGene('rsi', '<', 90)]),
+            Genome([StrategyGene('rsi', '>', 10)]),
+            Genome([StrategyGene('adx', '>', 10)]),
+            Genome([StrategyGene('bb_width', '>', 0.01)])
+        ]
+        self.population.extend(safety_net)
+        
+        # Fill rest
         while len(self.population) < POPULATION_SIZE:
              if self.population:
-                 # Pick a parent from the existing seeds using a weighted choice (simulate 'survival of the fittest' bias even at start)
-                 # or just simple random choice from the good seeds
-                 parent = random.choice(self.population[:len(seeds) + len(ai_strategies) if 'ai_strategies' in locals() else len(seeds)])
-                 
-                 # Clone and Mutate
+                 parent = random.choice(self.population[:len(seeds) + len(ai_strategies) if 'ai_strategies' in locals() else len(self.population)])
                  child = Genome(genes=[StrategyGene(g.indicator, g.operator, g.threshold) for g in parent.genes])
-                 child.mutate() # Slight variation
+                 child.mutate()
                  self.population.append(child)
              else:
-                 # Fallback if NO seeds exist (should unlikely happen)
                  self.population.append(Genome())
         
     def pre_calculate_outcomes(self):
         print("Pré-calculando resultados futuros (Otimização Vetorizada)...")
-        from fast_vector import calculate_outcomes_vectorized
+        from fast_vector import calculate_outcomes_vectorized, calculate_outcomes_vectorized_short
         
         # Calculate boolean mask of winners
-        winners_mask = calculate_outcomes_vectorized(
-            self.df, 
-            tp=0.0014, 
-            sl=0.0004, 
-            lookahead=60
+        # Long Winners
+        self.df['is_winner_long'] = calculate_outcomes_vectorized(
+            self.df, tp=0.0014, sl=0.0004, lookahead=60
         )
-        self.df['is_winner'] = winners_mask
+        # Short Winners
+        self.df['is_winner_short'] = calculate_outcomes_vectorized_short(
+            self.df, tp=0.0014, sl=0.0004, lookahead=60
+        )
+        
+        print(f"Winners (Long): {self.df['is_winner_long'].sum()} | Winners (Short): {self.df['is_winner_short'].sum()}")
 
     def fast_evaluate(self, genome, regime_filter=None):
         # Dynamic Query Construction
@@ -279,13 +292,38 @@ class EvolutionaryOptimizer:
              return
 
         trades = len(subset)
+        if trades == 0:
+            # Debug only a few to avoid spam
+            if random.random() < 0.01: 
+                print(f"⚠️ Zero trades for query: {query_str} (Regime: {regime_filter})")
+            genome.fitness = 0
+            genome.trades = 0
+            genome.winrate = 0
+            return
+            
         if trades < 5: # Minimum trades per regime
             genome.fitness = 0
             genome.trades = trades
             genome.winrate = 0
             return
             
-        wins = subset['is_winner'].sum()
+        # Select Outcome Column based on Regime
+        # UPTREND -> Long
+        # DOWNTREND -> Short
+        # SIDEWAYS -> Try Both? For now assume Long for simplicity or Mean Reversion Long.
+        # Ideally Sideways is Mean Reversion (Both).
+        # Let's verify both and take the best? Or split strategies?
+        # Current Architecture: Genome doesn't specify side.
+        # Let's assume:
+        # UPTREND -> Long
+        # DOWNTREND -> Short
+        # SIDEWAYS -> Long (default)
+        
+        target_col = 'is_winner_long'
+        if regime_filter == 'DOWNTREND':
+            target_col = 'is_winner_short'
+            
+        wins = subset[target_col].sum()
         winrate = (wins / trades) * 100
         
         
@@ -313,6 +351,11 @@ class EvolutionaryOptimizer:
         print("Iniciando Evolução Genética Context-Aware...")
         self.pre_calculate_outcomes()
         
+        # DEBUG DATA
+        print(f"DEBUG: DF Shape: {self.df.shape}")
+        print(f"DEBUG: Regimes: {self.df['regime'].unique()}")
+        print(f"DEBUG: Columns: {list(self.df.columns)}")
+        
         regimes = ['UPTREND', 'DOWNTREND', 'SIDEWAYS']
         best_strategies = {}
         
@@ -330,6 +373,13 @@ class EvolutionaryOptimizer:
                 self.population.sort(key=lambda x: x.fitness, reverse=True)
                 best_gen = self.population[0]
                 
+                # Check for Extinction (All Zero)
+                if best_gen.trades == 0:
+                    print(f"⚠️ GEN {gen+1}: Extinction Event (No logic matches data). Injecting fresh blood...")
+                    # Inject fresh simple genes
+                    for i in range(10): 
+                        self.population[-i] = Genome([StrategyGene()]) # Random single gene
+                    
                 # Print stats for top 1
                 if gen % 2 == 0:
                     print(f"   Gen {gen+1}: WR {best_gen.winrate:.1f}% | Trades {best_gen.trades} | Eq: {best_gen}")

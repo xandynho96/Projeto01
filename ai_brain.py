@@ -119,11 +119,15 @@ class AIBrain:
             self.model.fit(X, y, epochs=5, batch_size=32, verbose=0)
             self.model.save(self.model_path)
         else:
+            print(f"DEBUG: Input Shape {X.shape}. Starting Fit...")
             self.model.fit(X, y)
-            joblib.dump(self.model, self.model_path)
-            
-        joblib.dump(self.scaler, self.scaler_path)
-        print(f"Model saved to {self.model_path}")
+            print("DEBUG: Fit Complete. Saving model...")
+            try:
+                joblib.dump(self.model, self.model_path)
+                joblib.dump(self.scaler, self.scaler_path)
+                print(f"Model saved to {self.model_path}")
+            except Exception as e:
+                print(f"WARNING: Could not save model (File locked?): {e}")
 
     def predict_batch(self, df):
         """
@@ -170,6 +174,58 @@ class AIBrain:
             predictions = self.scaler.inverse_transform(dummy)[:, 0]
             
         return predictions
+
+    def get_prediction(self, df):
+        """
+        Predicts the NEXT price return based on the last sequence of the dataframe.
+        """
+        if self.model is None or len(df) < self.sequence_length:
+            return 0.0 # Neutral
+
+        # Prepare just the last sequence
+        # We need the last 'sequence_length' rows
+        # But prepare_data expects 'returns' column.
+        
+        if 'returns' not in df.columns:
+            df = df.copy()
+            df['returns'] = df['close'].pct_change().fillna(0)
+            
+        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx']
+        # Ensure features
+        for f in features:
+            if f not in df.columns: 
+                # Ideally calculate them, but assuming DF is fully prepped
+                df[f] = 0
+                
+        # Get last N rows
+        input_df = df.iloc[-self.sequence_length:].copy()
+        data = input_df[features].values
+        
+        # Scale
+        scaled_data = self.scaler.transform(data)
+        
+        # Reshape for model
+        # Input shape: (1, sequence_length, features)
+        X = np.array([scaled_data])
+        
+        if HAS_TENSORFLOW:
+            pred_scaled = self.model.predict(X, verbose=0)
+            val = pred_scaled[0][0]
+        else:
+            # Sklearn: Flatten
+            X_flat = X.reshape(1, -1)
+            pred_scaled = self.model.predict(X_flat)
+            val = pred_scaled[0]
+            
+        # Inverse transform to get predicted RETURN (since target was scaled return?)
+        # Wait, prepare_data y was scaled_data[i, 0] which corresponds to 'returns' (index 0).
+        # So 'val' is the scaled return.
+        
+        dummy = np.zeros((1, len(features)))
+        dummy[0, 0] = val
+        predicted_return = self.scaler.inverse_transform(dummy)[0, 0]
+        
+        return predicted_return
 
     def validate_signal_with_deepseek(self, current_price, predicted_price, technical_summary):
         # Placeholder

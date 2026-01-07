@@ -29,7 +29,7 @@ class QueueWriter:
 class BitcoinAIApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Bitcoin AI Trader - Control Panel v2")
+        self.root.title("Bitcoin AI Trader - Painel de Controle v2.1")
         self.root.geometry("1100x750")
         
         # Configure Grid
@@ -40,18 +40,18 @@ class BitcoinAIApp:
         header_frame = ttk.Frame(self.root, padding="10")
         header_frame.grid(row=0, column=0, sticky="ew")
         
-        lbl_title = ttk.Label(header_frame, text="Bitcoin AI System", font=("Helvetica", 16, "bold"))
+        lbl_title = ttk.Label(header_frame, text="Sistema Bitcoin AI", font=("Helvetica", 16, "bold"))
         lbl_title.pack(side="left")
 
         # --- Status & Balance ---
         status_frame = ttk.Frame(header_frame)
         status_frame.pack(side="right")
         
-        self.status_var = tk.StringVar(value="Status: Idle")
+        self.status_var = tk.StringVar(value="Status: Ocioso")
         lbl_status = ttk.Label(status_frame, textvariable=self.status_var, font=("Consolas", 10))
         lbl_status.pack(side="top", anchor="e")
         
-        self.balance_var = tk.StringVar(value="Balance: ---")
+        self.balance_var = tk.StringVar(value="Saldo: ---")
         lbl_balance = ttk.Label(status_frame, textvariable=self.balance_var, font=("Consolas", 10, "bold"))
         lbl_balance.pack(side="bottom", anchor="e")
 
@@ -61,27 +61,25 @@ class BitcoinAIApp:
 
         # Tab 1: Trading Console (Main)
         trading_tab = ttk.Frame(self.notebook)
-        self.notebook.add(trading_tab, text="Trading Console")
+        self.notebook.add(trading_tab, text="Console de Trading")
 
         # Tab 2: Settings (API Keys)
         settings_tab = ttk.Frame(self.notebook)
-        self.notebook.add(settings_tab, text="Settings")
+        self.notebook.add(settings_tab, text="Configurações")
 
         # Tab 3: Hall of Fame
         hof_tab = ttk.Frame(self.notebook)
-        self.notebook.add(hof_tab, text="Strategy Hall of Fame")
+        self.notebook.add(hof_tab, text="Hall da Fama (Estratégias)")
         
         hof_frame = ttk.Frame(hof_tab, padding="10")
         hof_frame.pack(fill="both", expand=True)
         
-        # Define tree_hof FIRST, before button that references it (though python lazy binding is fine, UI needs it)
-        
         # Button
-        btn_refresh_hof = ttk.Button(hof_frame, text="Refresh Strategies", command=self.load_strategies)
+        btn_refresh_hof = ttk.Button(hof_frame, text="Atualizar Estratégias", command=self.load_strategies)
         btn_refresh_hof.pack(anchor="w", pady=5)
         
         # Treeview
-        cols_hof = ('ID', 'Regime', 'Winrate', 'Trades', 'Origin', 'Logic (Genes)')
+        cols_hof = ('ID', 'Regime', 'Winrate', 'Trades', 'Origem', 'Lógica (Genes)')
         self.tree_hof = ttk.Treeview(hof_frame, columns=cols_hof, show='headings')
         self.tree_hof.heading('ID', text='ID')
         self.tree_hof.column('ID', width=40)
@@ -91,10 +89,10 @@ class BitcoinAIApp:
         self.tree_hof.column('Winrate', width=80)
         self.tree_hof.heading('Trades', text='# Trades')
         self.tree_hof.column('Trades', width=60)
-        self.tree_hof.heading('Origin', text='Origin')
-        self.tree_hof.column('Origin', width=80)
-        self.tree_hof.heading('Logic (Genes)', text='Logic')
-        self.tree_hof.column('Logic (Genes)', width=400)
+        self.tree_hof.heading('Origem', text='Origem')
+        self.tree_hof.column('Origem', width=80)
+        self.tree_hof.heading('Lógica (Genes)', text='Lógica')
+        self.tree_hof.column('Lógica (Genes)', width=400)
         
         sb_hof = ttk.Scrollbar(hof_frame, orient=tk.VERTICAL, command=self.tree_hof.yview)
         self.tree_hof.configure(yscroll=sb_hof.set)
@@ -102,7 +100,7 @@ class BitcoinAIApp:
         sb_hof.pack(side="right", fill="y")
 
         # --- SETTINGS TAB CONTENT ---
-        settings_frame = ttk.LabelFrame(settings_tab, text="Kraken API Configuration", padding="20")
+        settings_frame = ttk.LabelFrame(settings_tab, text="Configuração API Kraken", padding="20")
         settings_frame.pack(fill="x", padx=10, pady=10)
         
         ttk.Label(settings_frame, text="Kraken API Key:").pack(anchor="w")
@@ -113,11 +111,11 @@ class BitcoinAIApp:
         self.ent_secret = ttk.Entry(settings_frame, width=60, show="*")
         self.ent_secret.pack(fill="x", pady=(0, 10))
         
-        ttk.Label(settings_frame, text="Note: Keys are saved locally in user_config.json on first run.", font=("Arial", 8, "italic")).pack(anchor="w")
+        ttk.Label(settings_frame, text="Nota: Chaves salvas em user_config.json após iniciar.", font=("Arial", 8, "italic")).pack(anchor="w")
 
         # Demo Mode Checkbox
         self.var_demo_mode = tk.BooleanVar(value=True) # Default to True for safety/sanity
-        self.chk_demo = ttk.Checkbutton(settings_frame, text="Use Demo Mode (Sandbox Futures)", variable=self.var_demo_mode)
+        self.chk_demo = ttk.Checkbutton(settings_frame, text="Usar Modo Demo (Sandbox Futures)", variable=self.var_demo_mode)
         self.chk_demo.pack(anchor="w", pady=(5, 0))
 
         # --- TRADING TAB CONTENT ---
@@ -126,19 +124,19 @@ class BitcoinAIApp:
         content_frame.columnconfigure(1, weight=1)
 
         # Controls (Left)
-        control_pane = ttk.LabelFrame(content_frame, text="Trade Parameters", padding="10")
+        control_pane = ttk.LabelFrame(content_frame, text="Parâmetros de Trade", padding="10")
         control_pane.grid(row=0, column=0, sticky="ns", padx=5)
         
         params_frame = ttk.Frame(control_pane)
         params_frame.pack(fill="x", pady=5)
         
         # Row 1
-        ttk.Label(params_frame, text="Entry Size (USD):").grid(row=0, column=0, sticky="w")
+        ttk.Label(params_frame, text="Valor Entrada (USD):").grid(row=0, column=0, sticky="w")
         self.ent_amount = ttk.Entry(params_frame, width=10)
         self.ent_amount.insert(0, "50.0") # Default $50
         self.ent_amount.grid(row=0, column=1, sticky="w", padx=5)
         
-        ttk.Label(params_frame, text="Leverage (x):").grid(row=0, column=2, sticky="w")
+        ttk.Label(params_frame, text="Alavancagem (x):").grid(row=0, column=2, sticky="w")
         self.ent_leverage = ttk.Entry(params_frame, width=5)
         self.ent_leverage.insert(0, "50")
         self.ent_leverage.grid(row=0, column=3, sticky="w", padx=5)
@@ -157,24 +155,25 @@ class BitcoinAIApp:
         ttk.Separator(control_pane, orient="horizontal").pack(fill="x", pady=15)
 
         # Buttons
-        self.btn_run_trader = ttk.Button(control_pane, text="START Live Trading", command=self.toggle_trader)
+        self.btn_run_trader = ttk.Button(control_pane, text="INICIAR Trading (Ao Vivo)", command=self.toggle_trader)
         self.btn_run_trader.pack(fill="x", pady=5)
 
-        self.btn_dashboard = ttk.Button(control_pane, text="Open Dashboard", command=self.open_dashboard)
-        self.btn_dashboard.pack(fill="x", pady=5)
+        # This button replaces 'Open Dashboard'
+        self.btn_backtest = ttk.Button(control_pane, text="Executar Backtest", command=self.run_backtest_handler)
+        self.btn_backtest.pack(fill="x", pady=5)
         
-        self.btn_exit = ttk.Button(control_pane, text="Exit", command=self.on_closing)
+        self.btn_exit = ttk.Button(control_pane, text="Sair", command=self.on_closing)
         self.btn_exit.pack(fill="x", pady=15, side="bottom")
 
         # --- Trade History (Right) ---
-        history_frame = ttk.LabelFrame(content_frame, text="Live Trade History", padding="5")
+        history_frame = ttk.LabelFrame(content_frame, text="Histórico de Trades (Ao Vivo)", padding="5")
         history_frame.grid(row=0, column=1, sticky="nsew", padx=5)
         
-        cols = ('Time', 'Symbol', 'Side', 'Amount', 'Price', 'Status')
+        cols = ('Hora', 'Símbolo', 'Lado', 'Qtd', 'Preço', 'Status')
         self.tree = ttk.Treeview(history_frame, columns=cols, show='headings', height=8)
         for col in cols:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=80 if col != 'Time' else 140)
+            self.tree.column(col, width=80 if col != 'Hora' else 140)
         
         scrollbar = ttk.Scrollbar(history_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
@@ -184,7 +183,7 @@ class BitcoinAIApp:
         scrollbar.pack(side="right", fill="y")
 
         # --- Log Area ---
-        log_frame = ttk.LabelFrame(self.root, text="System Logs", padding="5")
+        log_frame = ttk.LabelFrame(self.root, text="Logs do Sistema", padding="5")
         log_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
         
         self.log_area = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 9))
@@ -192,7 +191,7 @@ class BitcoinAIApp:
 
         # --- Internal State ---
         self.trader_thread = None
-        self.dashboard_process = None
+        self.backtest_process = None
         self.running_trader = False
         self.stop_event = threading.Event()
         self.trader_instance = None # To access get_balance
@@ -234,9 +233,9 @@ class BitcoinAIApp:
                         self.ent_tp.delete(0, tk.END)
                         self.ent_tp.insert(0, str(data["tp_pct"]))
                         
-                self.log("Configuration loaded from user_config.json")
+                self.log("Configuração carregada de user_config.json")
             except Exception as e:
-                self.log(f"Failed to load config: {e}")
+                self.log(f"Falha ao carregar config: {e}")
 
     def save_config(self, api_key, secret, settings):
         """Saves current settings to json."""
@@ -249,9 +248,9 @@ class BitcoinAIApp:
         try:
             with open("user_config.json", "w") as f:
                 json.dump(data, f, indent=4)
-            self.log("Configuration saved to user_config.json")
+            self.log("Configuração salva em user_config.json")
         except Exception as e:
-            self.log(f"Failed to save config: {e}")
+            self.log(f"Falha ao salvar config: {e}")
 
     def process_log_queue(self):
         try:
@@ -272,7 +271,7 @@ class BitcoinAIApp:
              # Balance
             bal = self.trader_instance.dm.get_balance()
             if bal:
-                self.balance_var.set(f"Balance: ${bal:.2f}")
+                self.balance_var.set(f"Saldo: ${bal:.2f}")
             
             # History
             trades = self.trader_instance.dm.get_recent_trades(limit=20)
@@ -289,7 +288,6 @@ class BitcoinAIApp:
         
     def load_strategies(self):
         """Loads strategies from DB."""
-        # Need a temporary DM instance or reuse one
         try:
              # Crude check if we have a trader instance or need to make a temp DM
              if hasattr(self, 'trader_instance') and self.trader_instance:
@@ -307,7 +305,7 @@ class BitcoinAIApp:
                      s['id'], s['regime'], f"{s['winrate']:.1f}%", s['trades'], s['origin'], s['genes']
                  ))
         except Exception as e:
-            self.log(f"Error loading strategies: {e}")
+            self.log(f"Erro ao carregar estratégias: {e}")
 
     def log(self, message):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -320,7 +318,7 @@ class BitcoinAIApp:
             secret = self.ent_secret.get().strip()
             
             if not api_key or not secret:
-                self.log("ERROR: API Key and Secret are required.")
+                self.log("ERRO: API Key e Secret são obrigatórios.")
                 return
                 
             try:
@@ -332,7 +330,7 @@ class BitcoinAIApp:
                     'demo_mode': self.var_demo_mode.get()
                 }
             except ValueError:
-                self.log("ERROR: Invalid numeric values for settings.")
+                self.log("ERRO: Valores numéricos inválidos.")
                 return
 
             # Start
@@ -341,8 +339,8 @@ class BitcoinAIApp:
             # Save Config
             self.save_config(api_key, secret, user_settings)
             
-            self.btn_run_trader.configure(text="STOP Live Trading")
-            self.status_var.set("Status: Trading Active")
+            self.btn_run_trader.configure(text="PARAR Trading")
+            self.status_var.set("Status: Trading Ativo")
             
             # Disable inputs
             self.ent_api_key.configure(state='disabled')
@@ -353,10 +351,10 @@ class BitcoinAIApp:
             self.trader_thread.start()
         else:
             # Stop (Soft)
-            self.log("Requesting Stop... (Please Restart App to fully reset connections)")
+            self.log("Solicitando Parada... (Reinicie o App para reset total)")
             self.running_trader = False
-            self.btn_run_trader.configure(text="START Live Trading")
-            self.status_var.set("Status: Stopped")
+            self.btn_run_trader.configure(text="INICIAR Trading (Ao Vivo)")
+            self.status_var.set("Status: Parado")
             
             # Re-enable inputs
             self.ent_api_key.configure(state='normal')
@@ -364,13 +362,13 @@ class BitcoinAIApp:
             self.ent_amount.configure(state='normal')
 
     def run_trader_safe(self, api_key, secret, user_settings):
-        self.log("Initializing Trader...")
+        self.log("Inicializando Trader...")
         try:
             # BitcoinTrader is now imported at top level
             # Instantiate with params
             self.trader_instance = BitcoinTrader(api_key=api_key, secret=secret, user_settings=user_settings)
             
-            self.log("Trader Intialized. Loop starting...")
+            self.log("Trader Inicializado. Iniciando Loop...")
             self.trader_instance.run() 
         except Exception as e:
             self.log(f"Trader Crash: {e}")
@@ -379,21 +377,55 @@ class BitcoinAIApp:
             self.running_trader = False
             self.trader_instance = None       
 
-    def open_dashboard(self):
-        if self.dashboard_process is None:
-            self.log("Launching Dashboard...")
-            try:
-                cmd = ["streamlit", "run", "dashboard.py"]
-                self.dashboard_process = subprocess.Popen(cmd, cwd=os.getcwd(), shell=True) 
-                self.log("Dashboard launched in browser.")
-            except Exception as e:
-                self.log(f"Failed to launch dashboard: {e}")
-        else:
-            self.log("Dashboard is already running.")
+    def run_backtest_handler(self):
+        """Runs the backtest.py script in a separate process."""
+        self.log("Iniciando Backtest Acelerado...")
+        try:
+            # We use subprocess to run python backtest.py so it prints to the same stdout which we capture
+            # But wait, sys.stdout is captured by QueueWriter in THIS process. 
+            # Subprocess usually writes to its own pipe.
+            # We need to read that pipe.
+            
+            thread = threading.Thread(target=self._monitor_backtest)
+            thread.daemon = True
+            thread.start()
+            
+        except Exception as e:
+            self.log(f"Falha ao iniciar backtest: {e}")
+
+    def _monitor_backtest(self):
+        # Force UTF-8 encoding for the subprocess to handle emojis
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        
+        process = subprocess.Popen(
+            ["python", "-u", "backtest.py"], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            text=True,
+            encoding='utf-8', # Force read as UTF-8
+            bufsize=1,
+            env=env # Pass environment
+        )
+        self.backtest_process = process
+        
+        # Read lines
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                self.log(line.strip())
+                
+        # Also check stderr
+        for line in iter(process.stderr.readline, ''):
+            if line:
+                self.log(f"ERRO BACKTEST: {line.strip()}")
+                
+        process.stdout.close()
+        process.wait()
+        self.log("O Backtest terminou.")
 
     def on_closing(self):
-        if self.dashboard_process:
-            self.dashboard_process.kill()
+        if self.backtest_process:
+            self.backtest_process.kill()
         self.root.destroy()
         sys.exit()
 

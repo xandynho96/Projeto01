@@ -98,3 +98,59 @@ def calculate_outcomes_vectorized(df, tp=0.0014, sl=0.0004, lookahead=60):
     full_results = np.concatenate([results, padding])
     
     return full_results
+
+def calculate_outcomes_vectorized_short(df, tp=0.0014, sl=0.0004, lookahead=60):
+    """
+    Calculates Short outcomes (price goes DOWN).
+    Win = Low < Entry*(1-TP)
+    Loss = High > Entry*(1+SL)
+    """
+    closes = df['close'].values
+    highs = df['high'].values
+    lows = df['low'].values
+    n = len(closes)
+    
+    valid_n = n - lookahead
+    if valid_n <= 0:
+        return np.zeros(n, dtype=bool)
+    
+    # 1. Indices
+    idx_row = np.arange(valid_n).reshape(-1, 1)
+    idx_col = np.arange(1, lookahead + 1).reshape(1, -1)
+    indices = idx_row + idx_col
+    
+    window_highs = highs[indices]
+    window_lows = lows[indices]
+    entries = closes[:valid_n].reshape(-1, 1)
+    
+    # 2. Thresholds (Short)
+    # TP: Sell high, buy lower. Price must drop.
+    tp_prices = entries * (1 - tp)
+    # SL: Price rises.
+    sl_prices = entries * (1 + sl)
+    
+    # 3. Hits
+    # Win if Low < TP Price
+    tp_hits = window_lows < tp_prices
+    # Loss if High > SL Price
+    sl_hits = window_highs > sl_prices
+    
+    # 4. First Occurrance
+    tp_idx = np.argmax(tp_hits, axis=1)
+    sl_idx = np.argmax(sl_hits, axis=1)
+    
+    any_tp = tp_hits.max(axis=1)
+    any_sl = sl_hits.max(axis=1)
+    
+    results = np.zeros(valid_n, dtype=bool)
+    
+    # Win: TP hit, NO SL hit
+    mask_clean_win = any_tp & (~any_sl)
+    
+    # Win: TP hit AND SL hit, but TP earlier
+    mask_race_win = any_tp & any_sl & (tp_idx < sl_idx)
+    
+    results[:] = mask_clean_win | mask_race_win
+    
+    padding = np.zeros(lookahead, dtype=bool)
+    return np.concatenate([results, padding])

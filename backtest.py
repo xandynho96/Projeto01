@@ -81,77 +81,115 @@ class Backtester:
 
     def run_vectorized_backtest(self, signals):
         """
-        Runs a fully vectorized backtest. Faster by orders of magnitude.
+        Runs a fully vectorized backtest with Event-Based outcomes (SL/TP Hits).
+        Fast and supports accurate Risk/Reward simulation.
         signals: pd.Series of -1 (Short), 0 (Neutral), 1 (Long)
         """
         if self.df.empty: return {}
         
-        # 1. Align signals
-        # We assume signals are aligned with self.df.index
-        # Shift signal by 1 because signal calculated at T affects position at T+1 (conceptually)
-        # However, usually we trade AT close or Open of next. 
-        # Standard approach: Return = PctChange * Position.shift(1)
+        # Imports here to avoid circular at top if not needed
+        from fast_vector import calculate_outcomes_vectorized, calculate_outcomes_vectorized_short
         
-        # Calculate Percentage Change of Price
-        market_rets = self.df['close'].pct_change()
-        market_rets.fillna(0, inplace=True)
+        # 1. Config Defaults (ROE based)
+        # Default GUI: 30% SL, 70% TP on 50x Leverage
+        # Real Move: 0.6% SL, 1.4% TP
+        lev = config.LEVERAGE # 50
+        sl_roe = 30.0
+        tp_roe = 70.0
         
-        # Position: We need to turn signals into continuous positions
-        # If signal is 1, position becomes 1. If 0, position 0.
-        # If signal is 'buy', position stays 1 until 'close'.
-        # For simplicity in vectorization, let's assume 'signals' IS the target position.
+        # Try to load from user_config
+        try:
+            if os.path.exists("user_config.json"):
+                with open("user_config.json", 'r') as f:
+                    cfg = json.load(f)
+                    sl_roe = float(cfg.get('sl_pct', 30.0))
+                    tp_roe = float(cfg.get('tp_pct', 70.0))
+                    lev = float(cfg.get('leverage', lev))
+        except:
+            pass
+            
+        sl_pct = (sl_roe / lev) / 100
+        tp_pct = (tp_roe / lev) / 100
         
-        position = signals.shift(1).fillna(0)
+        # Lookahead: How long do we wait? 1H (60m)
+        lookahead = 60 
         
-        # Strategy Returns
-        strat_rets = position * market_rets
+        # 2. Boolean Masks for Outcomes
+        # We calculate "Did a Long Win?" and "Did a Short Win?" for EVERY candle
+        long_winners = calculate_outcomes_vectorized(self.df, tp=tp_pct, sl=sl_pct, lookahead=lookahead)
+        short_winners = calculate_outcomes_vectorized_short(self.df, tp=tp_pct, sl=sl_pct, lookahead=lookahead)
         
-        # Minus Fees
-        # Fee is paid when position CHANGES
-        # Change mask
-        pos_change = position.diff().abs() # 0 to 1 = 1, 1 to -1 = 2, etc.
-        # But fee is % of total transaction value. 
-        # 0->1: Pay fee on 1 unit. 1->-1: Close 1, Open 1 (Pay on 2 units? Backtester logic usually simplifies).
-        # Let's assume simple fee per turnover.
-        costs = pos_change * self.fee_pct 
+        # 3. Simulate Trades
+        # Where signal != 0
+        trades_mask = signals != 0
+        if not trades_mask.any():
+            return {'equity': self.initial_capital, 'roi': 0, 'winrate': 0, 'trades': 0}
+            
+        # Filter signals to only trade entries
+        # Simple Logic: Every signal is an entry (Scalping)
+        # Or: Only change of signal? 
+        # For "Action Learning", let's treat every signal as a potential trade opportunity
         
-        net_rets = strat_rets - costs
+        # Align masks
+        # Signal at T executes at T (Market) or T+1?
+        # fast_vector uses Entry = Close[i]. So Signal at T means we enter at Close[i]. Correct.
         
-        # Equity Curve
-        # (1 + r) * (1 + r2)...
-        equity_curve = (1 + net_rets).cumprod() * self.initial_capital
+        entry_signals = signals[trades_mask]
         
-        # Final Metrics
-        final_equity = equity_curve.iloc[-1]
-        total_pnl = final_equity - self.initial_capital
+        # Determine Outcome for each signal
+        # Map signal index to outcome array
+        # outcomes: 1 (Win), -1 (Loss)
+        
+        indices = entry_signals.index
+        # Get outcome bools at these indices
+        long_res = long_winners[self.df.index.get_indexer(indices)]
+        short_res = short_winners[self.df.index.get_indexer(indices)]
+        
+        pnl_log = []
+        
+        # Rewards (Fixed R:R)
+        # Win: +TP * Leverage * Capital (approx) -> Actually Capital * (TP_ROE)
+        # Loss: -SL * Leverage * Capital -> Capital * (SL_ROE)
+        # Fees?
+        
+        win_pnl = self.initial_capital * (tp_roe / 100)
+        loss_pnl = self.initial_capital * (sl_roe / 100)
+        
+        # Fee handling: 0.05% usually.
+        # paid on Entry + Exit. Total ~0.1% * Leverage.
+        fee_cost = self.initial_capital * lev * (self.fee_pct * 2) 
+        
+        net_win = win_pnl - fee_cost
+        net_loss = -loss_pnl - fee_cost
+        
+        # Iterate (Vectorized sum possible?)
+        # Vectorized:
+        # Long Signals (1): PnL = net_win if long_res else net_loss
+        # Short Signals (-1): PnL = net_win if short_res else net_loss
+        
+        # Masks relative to entry_signals
+        is_long = entry_signals == 1
+        is_short = entry_signals == -1
+        
+        # PnL Vector
+        pnl_vector = pd.Series(0.0, index=entry_signals.index)
+        
+        # Longs
+        pnl_vector[is_long & long_res] = net_win
+        pnl_vector[is_long & ~long_res] = net_loss
+        
+        # Shorts
+        pnl_vector[is_short & short_res] = net_win
+        pnl_vector[is_short & ~short_res] = net_loss
+        
+        # Stats
+        total_pnl = pnl_vector.sum()
+        final_equity = self.initial_capital + total_pnl
+        trades_count = len(pnl_vector)
+        
+        wins = ((is_long & long_res) | (is_short & short_res)).sum()
+        win_rate = (wins / trades_count * 100) if trades_count > 0 else 0
         roi = (total_pnl / self.initial_capital) * 100
-        
-        # Trades Count (Approximate by changes in position)
-        trades_count = pos_change[pos_change > 0].count()
-        
-        # Winrate (Approximate by positive return periods? No, that's candle winrate.)
-        # Trade Winrate is hard in full vectorization without loop.
-        # Hybrid approach: Vectorized equity, Loop for trade stats (iterating only changes is fast).
-        # OR just aggregate non-zero blocks.
-        
-        # Fast Winrate Calc:
-        # Group by trade: create a group ID that increments every time pos_change != 0
-        trade_ids = pos_change.cumsum()
-        # Sum returns per trade_id (ignoring id 0 if flat)
-        trade_pnl = net_rets.groupby(trade_ids).sum()
-        # Filter out flat periods (where position was 0) - tricky if no return but pos was 0. 
-        # Better: Filter where position was != 0
-        
-        real_trades_mask = position != 0
-        active_trade_ids = trade_ids[real_trades_mask]
-        
-        if not active_trade_ids.empty:
-            trade_returns = net_rets[real_trades_mask].groupby(active_trade_ids).sum()
-            wins = (trade_returns > 0).sum()
-            total = len(trade_returns)
-            win_rate = (wins / total * 100) if total > 0 else 0
-        else:
-            win_rate = 0
             
         return {
             'equity': final_equity,
@@ -176,6 +214,24 @@ class Backtester:
         # Let's start with raw signal: Long if <30, Short if >70. Else 0? No, that's mean reversion.
         return signals
 
+    def align_predictions(self, predictions, sequence_length):
+        """Aligns predictions with the DataFrame."""
+        if predictions is None or len(predictions) == 0:
+            return pd.Series(0.0, index=self.df.index)
+            
+        # Predictions correspond to indices [sequence_length:]
+        # We need to PAD the beginning
+        pad_len = len(self.df) - len(predictions)
+        if pad_len < 0:
+             # Weird case, maybe prediction buffer larger?
+             return pd.Series(predictions[:len(self.df)], index=self.df.index)
+             
+        padding = np.full(pad_len, np.nan)
+        aligned = np.concatenate([padding, predictions])
+        return pd.Series(aligned, index=self.df.index)
+
+        return pd.Series(aligned, index=self.df.index)
+
     def generate_ai_signals(self):
         # AI Pred already in DF
         if 'ai_pred' not in self.df.columns: return pd.Series(0, index=self.df.index)
@@ -183,9 +239,27 @@ class Backtester:
         pred = self.df['ai_pred']
         close = self.df['close']
         
+        # Technical Filters
+        rsi = self.df['rsi'] if 'rsi' in self.df.columns else pd.Series(50, index=self.df.index)
+        adx = self.df['adx'] if 'adx' in self.df.columns else pd.Series(0, index=self.df.index)
+        
         signals = pd.Series(0, index=self.df.index)
-        signals[pred > close * 1.001] = 1 # Long
-        signals[pred < close * 0.999] = -1 # Short
+        
+        # Enhanced Thresholds for AI
+        # Only trade if predicted change is SIGNIFICANT (> 0.2% for Scalping)
+        # AND Technical Confluence
+        
+        # Check if pred is sane (not 0.0)
+        valid_pred = (pred > 0) & (pred.notna())
+        
+        # Long: Pred > Current + 0.2% AND RSI < 60 (Room to grow) AND ADX > 20 (Trend)
+        long_cond = valid_pred & (pred > close * 1.002) & (rsi < 60) & (adx > 20)
+        signals[long_cond] = 1 
+        
+        # Short: Pred < Current - 0.2% AND RSI > 40 (Room to drop) AND ADX > 20
+        short_cond = valid_pred & (pred < close * 0.998) & (rsi > 40) & (adx > 20)
+        signals[short_cond] = -1 
+        
         return signals
 
     def run_strategy(self, strategy_name, strategy_func):
@@ -350,7 +424,15 @@ def run_continuous_training_loop(bt):
                 
             # 3. Train AI
             print("🧠 Training AI on updated dataset...")
-            brain.train(bt.df)
+            
+            # ACCELERATION: Train only on the most recent 2000 candles to prevent hanging on slow fits
+            train_limit = 2000
+            if len(bt.df) > train_limit:
+                 print(f"   -> Optimization: Training on last {train_limit} candles only (High Frequency Tuning).")
+                 train_df = bt.df.tail(train_limit).copy()
+                 brain.train(train_df)
+            else:
+                 brain.train(bt.df)
             
             # 3b. Pre-calculate AI Predictions for Backtest Speed
             print("🔮 Generating AI Predictions for backtest...")
@@ -434,7 +516,7 @@ def run_continuous_training_loop(bt):
             print("-" * 80)
             
             best_strat_name = None
-            best_strat_equity = -1
+            best_strat_equity = -float('inf')
             best_strat_wr = 0
             
             for name, res in results.items():
