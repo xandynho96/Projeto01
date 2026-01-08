@@ -5,7 +5,7 @@ a = Analysis(
     ['gui_app.py'],
     pathex=[],
     binaries=[],
-    datas=[('dashboard.py', '.'), ('crypto_data.db', '.')],
+    datas=[('dashboard.py', '.'), ('crypto_data.db', '.'), ('app_icon.png', '.')],
     hiddenimports=['pandas', 'numpy', 'sklearn', 'sklearn.utils._cython_blas', 'sklearn.neighbors.typedefs', 'sklearn.neighbors.quad_tree', 'sklearn.tree', 'sklearn.tree._utils', 'ta', 'ccxt', 'sqlalchemy', 'schedule', 'plotly', 'streamlit'],
     hookspath=[],
     hooksconfig={},

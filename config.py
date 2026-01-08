@@ -16,7 +16,7 @@ KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY', '')
 KRAKEN_SECRET = os.getenv('KRAKEN_SECRET', '')
 
 # Deepseek API
-DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', 'sk-5df7fcf6533b4ff19dcdcaf706f4b030')
 
 # Helper to load from JSON if ENV is missing
 import json

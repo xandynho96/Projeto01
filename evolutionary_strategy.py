@@ -6,8 +6,8 @@ from technical_analysis import TechnicalAnalysis
 from data_manager import DataManager
 
 # --- CONFIG ---
-POPULATION_SIZE = 50
-GENERATIONS = 3
+POPULATION_SIZE = 100
+GENERATIONS = 10
 CONDITIONS_PER_STRAT = 1 # Simplified for initial discovery
 
 INDICATORS = [
@@ -388,8 +388,12 @@ class EvolutionaryOptimizer:
                     best_for_regime = best_gen
                 
                 # Selection & Crossover
+                # Elitism: Keep top 3 best strategies
+                elites = self.population[:3]
+                
                 survivors = self.population[:int(POPULATION_SIZE*0.4)]
-                new_pop = survivors[:]
+                new_pop = elites[:] # Start with elites to ensure we never lose the best
+                
                 while len(new_pop) < POPULATION_SIZE:
                     p1 = random.choice(survivors)
                     p2 = random.choice(survivors)

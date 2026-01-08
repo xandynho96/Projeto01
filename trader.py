@@ -32,7 +32,7 @@ class BitcoinTrader:
             self.dm.set_leverage(leverage)
 
     def _initial_training(self):
-        self.logger.info("Performing initial data fetch and training...")
+        self.logger.info("Realizando busca inicial de dados e treinamento...")
         # Prefer loading from DB if we have history
         df = self.dm.get_data_from_db(limit=2000) # Quick check
         
@@ -46,21 +46,21 @@ class BitcoinTrader:
             df = ta.add_all_indicators()
             df.dropna(inplace=True)
             # Only train if model doesn't exist? Or re-train?
-            # For now, let's skip training here if it's already running in background manually
-            # or just load the model. 
-            pass 
+            # Enforce training on startup to ensure Scaler is fitted
+            self.logger.info("Treinando IA com dados iniciais...")
+            self.brain.train(df) 
         else:
-            self.logger.error("Failed to fetch initial data.")
+            self.logger.error("Falha ao buscar dados iniciais.")
 
     def job(self):
-        self.logger.info(f"--- Analysis Job Started ---")
+        self.logger.info(f"--- Iniciando Análise ---")
         
         # 1. Fetch latest data
         # Fetch slightly more than needed to calculate indicators correctly
         df = self.dm.fetch_historical_data(limit=1000)
         
         if df.empty:
-            self.logger.warning("No data received.")
+            self.logger.warning("Nenhum dado recebido.")
             return
 
         # 2. Save to DB
@@ -71,7 +71,14 @@ class BitcoinTrader:
         df = ta.add_all_indicators()
         df.dropna(inplace=True) # Important for LSTM
 
-        # 4. Get AI Prediction
+        # 4. Continuous Learning (Retrain on latest data)
+        self.logger.info("♻️ Atualizando Modelo IA com dados recentes...")
+        try:
+            self.brain.train(df)
+        except Exception as e:
+            self.logger.error(f"Falha ao atualizar modelo IA: {e}")
+
+        # 5. Get AI Prediction
         current_price = df['close'].iloc[-1]
         
         # New API returns 'predicted_return' (e.g. 0.005 for 0.5% up)
@@ -85,7 +92,7 @@ class BitcoinTrader:
              predicted_price = None
 
         if predicted_price is None:
-            self.logger.warning("AI could not make a prediction. Switching to Technical Analysis Fallback.")
+            self.logger.warning("IA não conseguiu prever. Usando Fallback de Análise Técnica.")
             # Fallback Logic: Use current price as base and let Signals decide
             predicted_price = current_price 
             
@@ -93,19 +100,19 @@ class BitcoinTrader:
             rsi = df['rsi'].iloc[-1]
             if rsi < 30:
                 signal = "buy"
-                self.logger.info("Fallback Strategy: RSI Oversold (<30) -> BUY Signal")
+                self.logger.info("Estratégia Fallback: RSI Sobrevendido (<30) -> SINAL COMPRA")
             elif rsi > 70:
                 signal = "sell"
-                self.logger.info("Fallback Strategy: RSI Overbought (>70) -> SELL Signal")
+                self.logger.info("Estratégia Fallback: RSI Sobrecomprado (>70) -> SINAL VENDA")
             else:
                  signal = "HOLD"
-                 self.logger.info(f"Fallback Strategy: RSI Neutral ({rsi:.2f}) -> HOLD")
+                 self.logger.info(f"Estratégia Fallback: RSI Neutro ({rsi:.2f}) -> HOLD")
                  return # Exit if HOLD
         else:
              # Normal AI Logic
-             self.logger.info(f"Current Price: {current_price:.2f}")
-             self.logger.info(f"Predicted Price (Next Candle): {predicted_price:.2f}")
-             self.logger.info(f"Predicted Return: {predicted_return*100:.4f}%")
+             self.logger.info(f"Preço Atual: {current_price:.2f}")
+             self.logger.info(f"Preço Previsto (Prox. Vela): {predicted_price:.2f}")
+             self.logger.info(f"Retorno Previsto: {predicted_return*100:.4f}%")
              
              # Threshold: if predicted return is > 0.1% (High Frequency Scalping)
              # User requested HFT Scalping so thresholds should be small.
@@ -113,7 +120,7 @@ class BitcoinTrader:
              # Let's use 0.05% (0.0005) filter
              
              change_percent = predicted_return * 100
-             self.logger.info(f"Expected Change: {change_percent:.4f}%")
+             self.logger.info(f"Mudança Esperada: {change_percent:.4f}%")
              
              signal = "HOLD"
              if change_percent > 0.02: # Very sensitive for 1m scalping
@@ -121,89 +128,91 @@ class BitcoinTrader:
              elif change_percent < -0.02:
                  signal = "sell"
             
-        self.logger.info(f"DECISION: {signal}")
-        
-        if signal != "HOLD":
-             # Use User Settings
-             # 'amount' is now treated as USD value (e.g., 50.0)
-             amount_usd = float(self.user_settings.get('amount', 50.0))
-             
-             # Calculate BTC amount based on current price
-             amount_btc = amount_usd / current_price
-             # Ensure a minimum size (Kraken Futures min is roughly 0.0001 or $1 depending on contract, safe margin)
-             if amount_btc < 0.0001:
-                 self.logger.warning(f"Calculated amount {amount_btc:.6f} BTC ($ {amount_usd}) is too small. Adjusting to 0.0001")
-                 amount_btc = 0.0001
-                 
-             self.logger.info(f"Target Entry: ${amount_usd} (~{amount_btc:.5f} BTC)")
-
-             sl_pct = float(self.user_settings.get('sl_pct', 2.0))
-             tp_pct = float(self.user_settings.get('tp_pct', 4.0))
-             
-             # Calculate SL/TP Prices
-             # BUY: SL below, TP above
-             # SELL: SL above, TP below
-             
-             params = {}
-             # CCXT Unified approach for simple SL/TP (might vary by exchange implementation)
-             # Ideally we check exchange capabilities, but adding params is a good first step.
-             # Kraken Futures: 'stopLossPrice', 'takeProfitPrice' might work or need 'stopLoss' dictionary
-             
-             if signal == "buy":
-                 sl_price = current_price * (1 - sl_pct/100)
-                 tp_price = current_price * (1 + tp_pct/100)
-             else: # sell
-                 sl_price = current_price * (1 + sl_pct/100)
-                 tp_price = current_price * (1 - tp_pct/100)
-                 
-             # params = {'stopLossPrice': sl_price, 'takeProfitPrice': tp_price} 
-             
-             # Execute Entry (Market Order)
-             self.logger.info(f"🚀 Executing {signal.upper()} Entry for {amount_btc:.5f} BTC...")
-             entry_order = self.dm.execute_order(config.SYMBOL, signal, amount_btc, type='market')
-             
-             if entry_order:
-                 self.logger.info(f"✅ Entry Filled. ID: {entry_order['id']}")
-                 
-                 # Record trade to history
-                 self.dm.save_trade(
-                     symbol=config.SYMBOL, 
-                     side=signal, 
-                     amount=amount_btc, 
-                     price=current_price, 
-                     status='open'
-                 )
-                 
-                 # --- Place Exit Orders (Reduce Only) ---
-                 # Stop Loss
-                 sl_side = "sell" if signal == "buy" else "buy"
-                 sl_params = {'reduceOnly': True}
-                 self.logger.info(f"🛡️ Placing Stop Loss at {sl_price:.2f}...")
-                 self.dm.execute_order(config.SYMBOL, sl_side, amount_btc, type='stop', price=sl_price, params=sl_params)
-                 
-                 # Take Profit
-                 tp_side = "sell" if signal == "buy" else "buy"
-                 tp_params = {'reduceOnly': True}
-                 self.logger.info(f"💰 Placing Take Profit at {tp_price:.2f}...")
-                 self.dm.execute_order(config.SYMBOL, tp_side, amount_btc, type='take_profit', price=tp_price, params=tp_params)
-                 
-             else:
-                 self.logger.error("❌ Entry Order Failed.")
+        self.logger.info(f"DECISÃO: {signal.upper()}")
         
         # 6. Deepseek Validation (Optional)
         if signal != "HOLD":
-            technical_summary = df.tail(1)[['rsi', 'macd', 'stoch_k']].to_dict('records')[0]
-            validation = self.brain.validate_signal_with_deepseek(current_price, predicted_price, technical_summary)
-            self.logger.info(f"Deepseek Validation: {validation}")
+            technical_summary = df.tail(1).to_dict('records')[0]
+            deepseek_key = self.user_settings.get('deepseek_key')
+            
+            if deepseek_key:
+                self.logger.info("🤖 Validando com DeepSeek AI...")
+                validation = self.brain.validate_signal_with_deepseek(current_price, predicted_price, technical_summary, api_key=deepseek_key)
+                self.logger.info(f"DeepSeek: {validation['reason']}")
+                
+                if not validation.get('approved', True):
+                    self.logger.warning("⛔ DeepSeek rejeitou a entrada. Cancelando trade.")
+                    return
+            else:
+                self.logger.info("DeepSeek ignorado (Sem chave API).")
 
+            # Use User Settings
+            # 'amount' is now treated as USD value (e.g., 50.0)
+            amount_usd = float(self.user_settings.get('amount', 50.0))
+            
+            # Calculate BTC amount based on current price
+            amount_btc = amount_usd / current_price
+            # Ensure a minimum size (Kraken Futures min is roughly 0.0001 or $1 depending on contract, safe margin)
+            if amount_btc < 0.0001:
+                self.logger.warning(f"Quantidade calculada {amount_btc:.6f} BTC ($ {amount_usd}) muito pequena. Ajustando para 0.0001")
+                amount_btc = 0.0001
+                
+            self.logger.info(f"Alvo Entrada: ${amount_usd} (~{amount_btc:.5f} BTC)")
+
+            sl_pct = float(self.user_settings.get('sl_pct', 2.0))
+            tp_pct = float(self.user_settings.get('tp_pct', 4.0))
+            
+            # Calculate SL/TP Prices
+            # BUY: SL below, TP above
+            # SELL: SL above, TP below
+            
+            if signal == "buy":
+                sl_price = current_price * (1 - sl_pct/100)
+                tp_price = current_price * (1 + tp_pct/100)
+            else: # sell
+                sl_price = current_price * (1 + sl_pct/100)
+                tp_price = current_price * (1 - tp_pct/100)
+                
+            # Execute Entry (Market Order)
+            self.logger.info(f"🚀 Executando entrada {signal.upper()} de {amount_btc:.5f} BTC...")
+            entry_order = self.dm.execute_order(config.SYMBOL, signal, amount_btc, type='market')
+            
+            if entry_order:
+                self.logger.info(f"✅ Entrada Executada. ID: {entry_order['id']}")
+                
+                # Record trade to history
+                self.dm.save_trade(
+                    symbol=config.SYMBOL, 
+                    side=signal, 
+                    amount=amount_btc, 
+                    price=current_price, 
+                    status='open'
+                )
+                
+                # --- Place Exit Orders (Reduce Only) ---
+                # Stop Loss
+                sl_side = "sell" if signal == "buy" else "buy"
+                sl_params = {'reduceOnly': True}
+                self.logger.info(f"🛡️ Colocando Stop Loss em {sl_price:.2f}...")
+                self.dm.execute_order(config.SYMBOL, sl_side, amount_btc, type='stop', price=sl_price, params=sl_params)
+                
+                # Take Profit
+                tp_side = "sell" if signal == "buy" else "buy"
+                tp_params = {'reduceOnly': True}
+                self.logger.info(f"💰 Colocando Take Profit em {tp_price:.2f}...")
+                self.dm.execute_order(config.SYMBOL, tp_side, amount_btc, type='take_profit', price=tp_price, params=tp_params)
+                
+            else:
+                self.logger.error("❌ Ordem de entrada falhou.")
+        
     def run(self):
-        self.logger.info("Bot is running. Press Ctrl+C to stop.")
+        self.logger.info("Bot rodando. Pressione Ctrl+C para parar.")
         
         # Run once immediately
         self.job()
         
-        # Schedule every hour (since timeframe is 1h)
-        schedule.every(1).hours.do(self.job)
+        # Schedule every minute (Scalping)
+        schedule.every(1).minutes.do(self.job)
         
         while True:
             schedule.run_pending()

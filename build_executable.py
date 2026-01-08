@@ -40,9 +40,10 @@ def build_executable():
         '--hidden-import=plotly',
         '--hidden-import=streamlit',
         
-        # Data files (add dashboard.py so it can be extracted and run)
+        # Data files
         '--add-data=dashboard.py;.', 
         '--add-data=crypto_data.db;.', 
+        '--add-data=app_icon.png;.', 
     ]
     
     # Run PyInstaller

@@ -79,4 +79,4 @@ def download_full_history(symbol_proxy='BTC/USDT', start_date='2017-01-01', time
 if __name__ == "__main__":
     # You can change start_date if you need even more history
     # 2020 is usually a good balance for relevance
-    download_full_history(start_date='2020-01-01', timeframe='1m')
+    download_full_history(start_date='2024-01-01', timeframe='1m')

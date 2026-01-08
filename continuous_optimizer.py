@@ -1,68 +1,89 @@
 import time
 import sys
-import subprocess
-from strategy_optimizer import StrategyOptimizer
-from extract_winning_signals import WinningSignalExtractor
-from train_imitation import train_classifier
-from backtest import run_backtest # We need to modify backtest to return logic
-
+import traceback
+from backtest import Backtester
+from ai_brain import AIBrain
 from evolutionary_strategy import EvolutionaryOptimizer
+from data_manager import DataManager
+from technical_analysis import TechnicalAnalysis
 
-# Simple orchestration script
 class ContinuousOptimizer:
     def __init__(self):
         self.target_winrate = 70.0
         self.iteration = 0
+        self.dm = DataManager()
         
     def start(self):
+        print("🚀 Starting Continuous Optimization Loop...")
+        # Initialize Brain once (or reload per cycle?) - Reload per cycle to ensure fresh scaler/model if changed
+        
         while True:
             self.iteration += 1
-            print(f"\n\n=== CICLO DE OTIMIZAÇÃO {self.iteration} ===")
-            print(f"Meta de Taxa de Acerto: {self.target_winrate}%")
+            print(f"\n\n=== OPTIMIZATION CYCLE {self.iteration} ===")
             
-            # 1. Genetic Evolution (Create Strategy)
-            print("Passo 1: Criando Estratégia via Algoritmo Genético (Evolução)...")
-            ga = EvolutionaryOptimizer()
-            best_strategies = ga.evolve()
-            print(f"Melhores Estratégias por Regime: {best_strategies.keys()}")
-            
-            # 2. Extraction (Using Best Strategies - Context Aware)
-            print("Passo 2: Extraindo Sinais Vencedores (Context-Aware)...")
-            extractor = WinningSignalExtractor()
-            extractor.extract(strategy_genome=best_strategies)
-            
-            # 3. Train AI
-            print("Passo 3: Retreinando Cérebro da IA (Aprendendo com Erros/Acertos)...")
-            train_classifier()
-            
-            # 4. Backtest
-            print("Passo 4: Verificando Performance no Mercado (Simulação)...")
             try:
-                # Direct call for executable compatibility
-                from backtest import run_backtest
-                result = run_backtest()
+                # 1. Genetic Evolution (Discover new patterns)
+                print("\n🧬 [Step 1] Evolving Strategies...")
+                ga = EvolutionaryOptimizer()
+                # Run evolution (updates internal state and can save strategies)
+                best_strategies = ga.evolve()
                 
-                # result is a dict: {'winrate': float, 'output': str, ...}
-                if result:
-                    # Output is already printed by run_backtest (via log function), but we can access it if needed
-                    winrate = result['winrate']
-                    print(f"Taxa de Acerto (Winrate): {winrate:.2f}%")
+                # 2. Train AI (Learn latest price action)
+                print("\n🧠 [Step 2] Retraining AI Brain...")
+                # Fetch fresh data for training
+                df = self.dm.get_data_from_db(limit=3000) # Train on recent history
+                if df.empty:
+                    print("⚠️ No data for training. Fetching...")
+                    df = self.dm.fetch_historical_data(limit=1000)
+                    df = self.dm.get_data_from_db(limit=2000)
+                
+                if not df.empty:
+                    # Ensure Indicators are present for AI Training features (bb_width, etc.)
+                    print("   Calculating Indicators for Training...")
+                    ta = TechnicalAnalysis(df)
+                    df = ta.add_all_indicators()
+                    df.dropna(inplace=True)
                     
-                    if winrate >= self.target_winrate:
-                        print(f"META ATINGIDA! Winrate: {winrate}%")
-                        print("A IA está pronta para operar com alta precisão.")
-                        break
-                    else:
-                        print(f"Meta não atingida ({winrate:.2f}% < {self.target_winrate}%). Reiniciando ciclo de aprendizado...")
+                    brain = AIBrain()
+                    # Train on 1m data
+                    brain.train(df)
                 else:
-                    print("Erro no Backtest: Nenhum resultado retornado.")
-
+                    print("❌ Critical: Still no data.")
+                
+                # 3. Validation (Backtest)
+                print("\n🧪 [Step 3] Validating Performance...")
+                bt = Backtester(symbol='PF_XBTUSD', timeframe='1m')
+                bt.load_data(limit=2000) # Load data for backtest
+                
+                # Generate Signals
+                print("   Generating AI Signals...")
+                # We need to manually inject predictions into BT df or let BT do it?
+                # BT has 'generate_ai_signals' which checks 'ai_pred' column.
+                # Let's interact with BT's internal DF
+                
+                preds = brain.predict_batch(bt.df)
+                aligned_preds = bt.align_predictions(preds, brain.sequence_length)
+                bt.df['ai_pred'] = aligned_preds
+                
+                signals = bt.generate_ai_signals()
+                result = bt.run_vectorized_backtest(signals)
+                
+                if result:
+                    winrate = result['winrate']
+                    trades = result['trades']
+                    print(f"\n📊 RESULT: Winrate {winrate:.2f}% | Trades: {trades} | ROI: {result['roi']:.2f}%")
+                    
+                    if winrate >= self.target_winrate and trades > 5:
+                        print("✅ TARGET HIT! System is optimized.")
+                        # Could break here or continue to maintain
+                    else:
+                        print(f"⚠️ Target not met (<{self.target_winrate}%). Loop continues...")
+                
             except Exception as e:
-                print(f"Falha no Backtest: {e}")
-                import traceback
+                print(f"❌ Cycle Error: {e}")
                 traceback.print_exc()
             
-            print("Aguardando 10s para o próximo ciclo...")
+            print("\nSuggesting 10s cooldown...")
             time.sleep(10)
 
 if __name__ == "__main__":

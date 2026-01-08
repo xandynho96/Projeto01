@@ -19,10 +19,13 @@ def setup_logger(name='BitcoinAI'):
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     # File Handler (Rotating: 5MB max, 2 backups)
-    file_handler = RotatingFileHandler('logs/bot.log', maxBytes=5*1024*1024, backupCount=2)
+    file_handler = RotatingFileHandler('logs/bot.log', maxBytes=5*1024*1024, backupCount=2, encoding='utf-8')
     file_handler.setFormatter(formatter)
     
-    # Console Handler
+    # Console Handler - Force UTF-8 for Windows
+    if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+        
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
 

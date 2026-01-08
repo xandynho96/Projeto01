@@ -32,6 +32,15 @@ class BitcoinAIApp:
         self.root.title("Bitcoin AI Trader - Painel de Controle v2.1")
         self.root.geometry("1100x750")
         
+        # Load Icon
+        try:
+            icon_path = script_utils.resource_path("app_icon.png")
+            if os.path.exists(icon_path):
+                img = tk.PhotoImage(file=icon_path)
+                self.root.iconphoto(False, img)
+        except Exception:
+            pass
+
         # Configure Grid
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(2, weight=1) # Log area expands
@@ -111,6 +120,10 @@ class BitcoinAIApp:
         self.ent_secret = ttk.Entry(settings_frame, width=60, show="*")
         self.ent_secret.pack(fill="x", pady=(0, 10))
         
+        ttk.Label(settings_frame, text="DeepSeek API Key (Opcional):").pack(anchor="w")
+        self.ent_deepseek = ttk.Entry(settings_frame, width=60, show="*")
+        self.ent_deepseek.pack(fill="x", pady=(0, 10))
+        
         ttk.Label(settings_frame, text="Nota: Chaves salvas em user_config.json após iniciar.", font=("Arial", 8, "italic")).pack(anchor="w")
 
         # Demo Mode Checkbox
@@ -188,6 +201,12 @@ class BitcoinAIApp:
         
         self.log_area = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 9))
         self.log_area.pack(fill="both", expand=True)
+        
+        # Defines tags for color
+        self.log_area.tag_config("buy", foreground="green", font=("Consolas", 9, "bold"))
+        self.log_area.tag_config("sell", foreground="red", font=("Consolas", 9, "bold"))
+        self.log_area.tag_config("error", foreground="orange")
+        self.log_area.tag_config("info", foreground="black")
 
         # --- Internal State ---
         self.trader_thread = None
@@ -216,6 +235,7 @@ class BitcoinAIApp:
                     data = json.load(f)
                     self.ent_api_key.insert(0, data.get("api_key", ""))
                     self.ent_secret.insert(0, data.get("secret", ""))
+                    self.ent_deepseek.insert(0, data.get("deepseek_key", ""))
                     
                     if "demo_mode" in data:
                         self.var_demo_mode.set(data["demo_mode"])
@@ -242,6 +262,7 @@ class BitcoinAIApp:
         data = {
             "api_key": api_key,
             "secret": secret,
+            "deepseek_key": self.ent_deepseek.get().strip(),
             "demo_mode": self.var_demo_mode.get(),
             **settings
         }
@@ -257,7 +278,18 @@ class BitcoinAIApp:
             while True:
                 msg = self.log_queue.get_nowait()
                 self.log_area.configure(state='normal')
-                self.log_area.insert(tk.END, msg)
+                
+                # Check for keywords to colorize
+                tag = "info"
+                lower_msg = msg.lower()
+                if "buy" in lower_msg or "compra" in lower_msg:
+                    tag = "buy"
+                elif "sell" in lower_msg or "venda" in lower_msg:
+                    tag = "sell"
+                elif "error" in lower_msg or "crash" in lower_msg or "falha" in lower_msg:
+                    tag = "error"
+                    
+                self.log_area.insert(tk.END, msg, tag)
                 self.log_area.see(tk.END)
                 self.log_area.configure(state='disabled')
         except queue.Empty:
@@ -267,7 +299,7 @@ class BitcoinAIApp:
 
     def update_ui_data(self):
         """Polls for Balance and History updates if trader is active."""
-        if self.trader_instance and self.trader_instance.dm:
+        if self.trader_instance and hasattr(self.trader_instance, 'dm') and self.trader_instance.dm:
              # Balance
             bal = self.trader_instance.dm.get_balance()
             if bal:
@@ -327,7 +359,8 @@ class BitcoinAIApp:
                     'leverage': float(self.ent_leverage.get()),
                     'sl_pct': float(self.ent_sl.get()),
                     'tp_pct': float(self.ent_tp.get()),
-                    'demo_mode': self.var_demo_mode.get()
+                    'demo_mode': self.var_demo_mode.get(),
+                    'deepseek_key': self.ent_deepseek.get().strip()
                 }
             except ValueError:
                 self.log("ERRO: Valores numéricos inválidos.")

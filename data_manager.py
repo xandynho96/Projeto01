@@ -72,6 +72,11 @@ class DataManager:
                 # Correct way to enable Sandbox/Demo environment in CCXT
                 print("⚠️  USING DEMO/SANDBOX ENVIRONMENT ⚠️")
                 self.exchange.set_sandbox_mode(True)
+                # Explicitly override URLs just in case CCXT defaults are old
+                # self.exchange.urls['api'] = {
+                #     'public': 'https://demo-futures.kraken.com/derivatives/api/v3',
+                #     'private': 'https://demo-futures.kraken.com/derivatives/api/v3',
+                # }
             else:
                 self.exchange = ccxt.krakenfutures(exchange_config)
             self.exchange.load_markets()
@@ -86,6 +91,10 @@ class DataManager:
         """Fetches historical OHLCV data from Kraken."""
         print(f"Fetching {limit if limit else 'all'} candles for {symbol} ({timeframe}) since {since}...")
         try:
+            if not self.exchange:
+                print("Exchange not connected.")
+                return pd.DataFrame()
+
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit, since=since)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -202,9 +211,18 @@ class DataManager:
             for _, row in df.iterrows():
                 if row['timestamp'] in existing_timestamps:
                     continue
+                
+                # Handle potential string timestamp (if not converted properly)
+                ts = row['timestamp']
+                if isinstance(ts, str):
+                    ts = pd.to_datetime(ts)
+                
+                # Convert to pydatetime if it's a pandas Timestamp
+                if hasattr(ts, 'to_pydatetime'):
+                    ts = ts.to_pydatetime()
                     
                 market_data = MarketData(
-                    timestamp=row['timestamp'].to_pydatetime(),
+                    timestamp=ts,
                     symbol=symbol,
                     timeframe=timeframe,
                     open=row['open'],
@@ -230,6 +248,10 @@ class DataManager:
         try:
             query = f"SELECT * FROM market_data WHERE symbol = '{symbol}' AND timeframe = '{timeframe}' ORDER BY timestamp ASC"
             df = pd.read_sql(query, self.engine)
+            # SQLite returns strings for dates, ensure datetime
+            if not df.empty and 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                
             if not df.empty and limit:
                 df = df.tail(limit)
             return df
@@ -239,7 +261,7 @@ class DataManager:
 
     def set_leverage(self, leverage, symbol=config.SYMBOL):
         """Sets leverage for the given symbol on Kraken Futures."""
-        if not self.exchange.apiKey:
+        if not self.exchange or not self.exchange.apiKey:
             return # Public mode only
             
         try:
@@ -259,6 +281,26 @@ class DataManager:
             return None
             
         try:
+            # Kraken Futures Specific Logic
+            # CCXT Unified is good, but Futures order types can be tricky.
+            # 'stop' -> type='stop-loss', needs 'stopPrice' in params (or triggerPrice)
+            # 'take_profit' -> type='take-profit', needs 'stopPrice' in params
+            
+            # Map simplified types to CCXT/Kraken types
+            if type == 'stop':
+                type = 'stop-loss' # Kraken Futures specific
+                if price and 'stopPrice' not in params:
+                    params['stopPrice'] = price
+                # Ensure price arg is None for market stop (or use limit if intended)
+                # Usually we want Market Stop for guaranteed exit
+                price = None 
+                
+            elif type == 'take_profit':
+                type = 'take-profit'
+                if price and 'stopPrice' not in params:
+                    params['stopPrice'] = price
+                price = None
+
             print(f"Executing {side} {type} order for {amount} {symbol}...")
             # For Kraken Futures, check if they support stopLoss/takeProfit in params of create_order
             # Otherwise might need separate orders.
