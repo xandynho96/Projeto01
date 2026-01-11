@@ -5,10 +5,10 @@ load_dotenv()
 
 # Trading settings
 # Trading settings
-SYMBOL = 'PF_XBTUSD' # Kraken Futures Perpetual (Linear)
+SYMBOL = 'BTC/USD' # Kraken Spot
 TIMEFRAME = '1m' # Changed to 1m for High-Frequency Scalping
 LIMIT = 1000  # Number of candles to fetch
-LEVERAGE = 5 # Default Leverage
+LEVERAGE = 10 # Spot Margin Leverage
 
 # API Keys (Kraken) - Leave empty for public data
 # API Keys (Kraken) - Leave empty for public data

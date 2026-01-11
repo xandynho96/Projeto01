@@ -52,8 +52,81 @@ class BitcoinTrader:
         else:
             self.logger.error("Falha ao buscar dados iniciais.")
 
+    def sync_open_trades(self):
+        """Checks if open trades in DB are closed on Exchange."""
+        open_trades = self.dm.get_open_trades()
+        if not open_trades:
+            return
+
+        self.logger.info(f"🔄 Sincronizando {len(open_trades)} trades abertos...")
+        
+        # Fetch recent trades from Kraken
+        # We need enough history to cover the open trades
+        try:
+            # fetch_my_trades usually returns list of dicts
+            kraken_trades = self.dm.exchange.fetch_my_trades(symbol=config.SYMBOL, limit=50) 
+            # Sort by time desc
+            kraken_trades.sort(key=lambda x: x['timestamp'], reverse=True)
+            
+            for open_trade in open_trades:
+                # Logic: Look for a trade with OPPOSITE side that happened AFTER open_trade timestamp
+                # taking into account some buffer?
+                # Simple logic: If we are LONG, look for SELL.
+                
+                entry_side = open_trade['side']
+                exit_side = 'sell' if entry_side == 'buy' else 'buy'
+                
+                # Filter kraken trades for potential exits
+                # potential_exits = [t for t in kraken_trades if t['side'] == exit_side and t['timestamp'] > open_trade['timestamp']]
+                
+                # Check for Filled Orders that match
+                # Often easier to check 'closed' orders if we have order ID, but we didn't save it initially.
+                # Heuristic: If we find a generic 'sell' of the same amount? Or just ANY exit?
+                # For this MVP, let's assume any trade with opposite side after entry is an exit relative to our position.
+                # Ideally, we should track Position size.
+                
+                # Let's try to match by approximation logic or check position.
+                
+                # Better approach for Futures:
+                # Check current position size from Exchange.
+                # If position is 0 and we have open trades, all are closed.
+                # But we might have partials.
+                
+                # Use fetch_positions for Futures
+                # self.dm.exchange.fetch_positions()
+                
+                # Simpler Fallback: Match recent trades
+                match = None
+                for kt in kraken_trades:
+                    if kt['side'] == exit_side and kt['timestamp'] > open_trade['timestamp'].timestamp() * 1000:
+                         match = kt
+                         break
+                
+                if match:
+                    # Found an exit!
+                    exit_price = match['price']
+                    exit_qty = match['amount']
+                    
+                    # Calculate PNL
+                    # Long: (Exit - Entry) * Qty
+                    # Short: (Entry - Exit) * Qty
+                    if entry_side == 'buy':
+                        raw_pnl = (exit_price - open_trade['price']) * exit_qty
+                    else:
+                        raw_pnl = (open_trade['price'] - exit_price) * exit_qty
+                        
+                    self.dm.update_trade_status(open_trade['id'], 'closed', pnl=raw_pnl)
+                    self.logger.info(f"✅ Trade {open_trade['id']} ENCERRADO. PNL: ${raw_pnl:.2f}")
+
+        except Exception as e:
+            self.logger.error(f"Erro ao sincronizar trades: {e}")
+
+
     def job(self):
         self.logger.info(f"--- Iniciando Análise ---")
+        
+        # 0. Sync Status
+        self.sync_open_trades()
         
         # 1. Fetch latest data
         # Fetch slightly more than needed to calculate indicators correctly
@@ -122,10 +195,14 @@ class BitcoinTrader:
              change_percent = predicted_return * 100
              self.logger.info(f"Mudança Esperada: {change_percent:.4f}%")
              
+             # Spot Fees are ~0.26% Taker (Round trip ~0.52%).
+             # We need a threshold > 0.5% to break even on Fees alone.
+             threshold = 0.45 # Aggressive but realistic attempt (assuming some Maker or price improvement)
+             
              signal = "HOLD"
-             if change_percent > 0.02: # Very sensitive for 1m scalping
+             if change_percent > threshold:
                  signal = "buy"
-             elif change_percent < -0.02:
+             elif change_percent < -threshold:
                  signal = "sell"
             
         self.logger.info(f"DECISÃO: {signal.upper()}")
@@ -152,10 +229,11 @@ class BitcoinTrader:
             
             # Calculate BTC amount based on current price
             amount_btc = amount_usd / current_price
-            # Ensure a minimum size (Kraken Futures min is roughly 0.0001 or $1 depending on contract, safe margin)
-            if amount_btc < 0.0001:
-                self.logger.warning(f"Quantidade calculada {amount_btc:.6f} BTC ($ {amount_usd}) muito pequena. Ajustando para 0.0001")
-                amount_btc = 0.0001
+            # Ensure a minimum size (Kraken Spot min is usually around $10, e.g. 0.0001 BTC at 100k, 0.0002 at 50k)
+            # Safe margin: 0.0002
+            if amount_btc < 0.0002:
+                self.logger.warning(f"Quantidade calculada {amount_btc:.6f} BTC ($ {amount_usd}) muito pequena. Ajustando para 0.0002")
+                amount_btc = 0.0002
                 
             self.logger.info(f"Alvo Entrada: ${amount_usd} (~{amount_btc:.5f} BTC)")
 

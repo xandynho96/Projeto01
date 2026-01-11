@@ -64,6 +64,11 @@ class BitcoinAIApp:
         lbl_balance = ttk.Label(status_frame, textvariable=self.balance_var, font=("Consolas", 10, "bold"))
         lbl_balance.pack(side="bottom", anchor="e")
 
+        self.weekly_pl_var = tk.StringVar(value="PL Semanal: ---")
+        lbl_weekly_pl = ttk.Label(status_frame, textvariable=self.weekly_pl_var, font=("Consolas", 9))
+        lbl_weekly_pl.pack(side="bottom", anchor="e")
+
+
         # --- Tabs ---
         self.notebook = ttk.Notebook(self.root)
         self.notebook.grid(row=1, column=0, sticky="nsew", padx=5)
@@ -128,7 +133,7 @@ class BitcoinAIApp:
 
         # Demo Mode Checkbox
         self.var_demo_mode = tk.BooleanVar(value=True) # Default to True for safety/sanity
-        self.chk_demo = ttk.Checkbutton(settings_frame, text="Usar Modo Demo (Sandbox Futures)", variable=self.var_demo_mode)
+        self.chk_demo = ttk.Checkbutton(settings_frame, text="Usar Modo Demo (Dry Run / Simulação)", variable=self.var_demo_mode)
         self.chk_demo.pack(anchor="w", pady=(5, 0))
 
         # --- TRADING TAB CONTENT ---
@@ -151,7 +156,7 @@ class BitcoinAIApp:
         
         ttk.Label(params_frame, text="Alavancagem (x):").grid(row=0, column=2, sticky="w")
         self.ent_leverage = ttk.Entry(params_frame, width=5)
-        self.ent_leverage.insert(0, "50")
+        self.ent_leverage.insert(0, "10")
         self.ent_leverage.grid(row=0, column=3, sticky="w", padx=5)
         
         # Row 2
@@ -304,9 +309,14 @@ class BitcoinAIApp:
             bal = self.trader_instance.dm.get_balance()
             if bal:
                 self.balance_var.set(f"Saldo: ${bal:.2f}")
+
+            # Weekly PL
+            w_pl = self.trader_instance.dm.get_weekly_pnl()
+            self.weekly_pl_var.set(f"PL Semanal: ${w_pl:.2f}")
             
             # History
             trades = self.trader_instance.dm.get_recent_trades(limit=20)
+
             # Clear current items
             for item in self.tree.get_children():
                 self.tree.delete(item)

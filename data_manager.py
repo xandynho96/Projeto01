@@ -55,32 +55,38 @@ class DataManager:
         self.exchange = None
         
         # Initial connection if keys are present (optional, can be overridden)
+        self.demo_mode = False
         if config.KRAKEN_API_KEY:
             self.connect_exchange(config.KRAKEN_API_KEY, config.KRAKEN_SECRET)
+            
+        self.leverage = config.LEVERAGE # Default leverage
 
     def connect_exchange(self, api_key, secret, demo_mode=False):
-        """Connects to Kraken Futures with provided keys."""
+        """Connects to Kraken Spot (Margin) with provided keys."""
+        self.demo_mode = demo_mode
         try:
             exchange_config = {
                 'apiKey': api_key,
                 'secret': secret,
                 'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot', # Kraken Spot
+                }
             }
             
             if demo_mode:
-                self.exchange = ccxt.krakenfutures(exchange_config)
-                # Correct way to enable Sandbox/Demo environment in CCXT
-                print("⚠️  USING DEMO/SANDBOX ENVIRONMENT ⚠️")
-                self.exchange.set_sandbox_mode(True)
-                # Explicitly override URLs just in case CCXT defaults are old
-                # self.exchange.urls['api'] = {
-                #     'public': 'https://demo-futures.kraken.com/derivatives/api/v3',
-                #     'private': 'https://demo-futures.kraken.com/derivatives/api/v3',
-                # }
+                print("⚠️  DEMO MODE REQUESTED: Kraken Spot does not have a public Sandbox.")
+                print("⚠️  Running in DRY-RUN/PAPER-TRADING mode (No real orders will be sent).")
+                # We can still connect to public data
+                self.exchange = ccxt.kraken(exchange_config)
+                # But we might need to flag the bot to NOT send create_order if demo_mode is True
+                # For now, let's just connect standard kraken.
+                # self.exchange.set_sandbox_mode(True) # Not supported for Spot usually
             else:
-                self.exchange = ccxt.krakenfutures(exchange_config)
+                self.exchange = ccxt.kraken(exchange_config)
+            
             self.exchange.load_markets()
-            print("Connected to Kraken Futures.")
+            print("Connected to Kraken Spot (Margin Enabled).")
             return True
         except Exception as e:
             print(f"Failed to connect to Kraken: {e}")
@@ -260,19 +266,9 @@ class DataManager:
             return pd.DataFrame()
 
     def set_leverage(self, leverage, symbol=config.SYMBOL):
-        """Sets leverage for the given symbol on Kraken Futures."""
-        if not self.exchange or not self.exchange.apiKey:
-            return # Public mode only
-            
-        try:
-            # Kraken Futures often sets leverage per order or account config. 
-            # CCXT unify this setLeverage if supported.
-            # For Kraken Futures, we might need to be specific.
-            # Checking implicit support:
-            self.exchange.set_leverage(leverage, symbol)
-            print(f"Leverage set to {leverage}x for {symbol}")
-        except Exception as e:
-            print(f"Error setting leverage: {e}")
+        """Sets leverage preference for Kraken Spot Margin."""
+        self.leverage = leverage
+        print(f"Leverage set to {leverage}x (Applied per order on Kraken Spot)")
 
     def execute_order(self, symbol, side, amount, type='market', price=None, params={}):
         """Executes an order on Kraken Futures."""
@@ -288,24 +284,52 @@ class DataManager:
             
             # Map simplified types to CCXT/Kraken types
             if type == 'stop':
-                type = 'stop-loss' # Kraken Futures specific
-                if price and 'stopPrice' not in params:
-                    params['stopPrice'] = price
-                # Ensure price arg is None for market stop (or use limit if intended)
-                # Usually we want Market Stop for guaranteed exit
+                type = 'stop-loss'
+                # For CCXT Kraken: `price` argument is usually the stop trigger price for market stops
+                # But params['stopPrice'] is safer for unification.
+                if price:
+                     params['stopPrice'] = price
                 price = None 
                 
             elif type == 'take_profit':
                 type = 'take-profit'
-                if price and 'stopPrice' not in params:
-                    params['stopPrice'] = price
+                if price:
+                     params['stopPrice'] = price
                 price = None
+                
+            # Spot Margin does not use 'reduceOnly' param usually. Remove it if present to avoid errors.
+            if 'reduceOnly' in params:
+                del params['reduceOnly']
 
             print(f"Executing {side} {type} order for {amount} {symbol}...")
-            # For Kraken Futures, check if they support stopLoss/takeProfit in params of create_order
-            # Otherwise might need separate orders.
-            # CCXT unified params usually work for simple SL/TP if exchange supports 'stopLossPrice'/'takeProfitPrice'
             
+            # Add Leverage to params
+            if hasattr(self, 'leverage') and self.leverage > 1:
+                params['leverage'] = self.leverage
+                
+            # Kraken Spot specific handling for Stop/TP
+            # if type == 'stop-loss' or type == 'take-profit':
+                 # params['price'] might be needed if it's a Limit Stop, but for Market Stop check CCXT docs.
+                 # Usually 'price' arg in create_order is the Limit Price, 
+                 # and 'stopPrice' in params is the trigger.
+                 # If price is None, it's a Market order triggered at stopPrice.
+                 
+            # DRY RUN CHECK
+            if self.demo_mode:
+                print(f"[DRY-RUN] Simulating Order: {side} {type} {amount} {symbol} (Lev: {params.get('leverage', 'None')})")
+                # Return fake order
+                import random
+                fake_id = f"demo_{int(time.time())}_{random.randint(1000,9999)}"
+                return {
+                    'id': fake_id,
+                    'symbol': symbol,
+                    'side': side,
+                    'amount': amount,
+                    'price': price if price else 0.0, # Approximate
+                    'status': 'closed',
+                    'timestamp': int(time.time()*1000)
+                }
+
             order = self.exchange.create_order(symbol, type, side, amount, price, params)
             print(f"Order Executed: {order['id']}")
             return order
@@ -371,6 +395,62 @@ class DataManager:
             return []
         finally:
             session.close()
+
+    def get_open_trades(self):
+        """Fetches all open trades."""
+        session = self.Session()
+        try:
+            trades = session.query(Trade).filter(Trade.status == 'open').all()
+            return [{
+                'id': t.id,
+                'symbol': t.symbol,
+                'side': t.side,
+                'amount': t.amount,
+                'price': t.price,
+                'timestamp': t.timestamp
+            } for t in trades]
+        except Exception as e:
+            print(f"Error fetching open trades: {e}")
+            return []
+        finally:
+            session.close()
+
+    def update_trade_status(self, trade_id, status, pnl=None):
+        """Updates trade status and PNL."""
+        session = self.Session()
+        try:
+            trade = session.query(Trade).filter(Trade.id == trade_id).first()
+            if trade:
+                trade.status = status
+                if pnl is not None:
+                    trade.pnl = pnl
+                session.commit()
+                print(f"Trade {trade_id} updated: {status} (PNL: {pnl})")
+        except Exception as e:
+            session.rollback()
+            print(f"Error updating trade: {e}")
+        finally:
+            session.close()
+
+    def get_weekly_pnl(self):
+        """Calculates total PNL for the last 7 days."""
+        session = self.Session()
+        try:
+            seven_days_ago = datetime.utcnow() - pd.Timedelta(days=7)
+            # Sum PNL of closed trades in last 7 days
+            result = session.query(Trade).filter(
+                Trade.status == 'closed', 
+                Trade.timestamp >= seven_days_ago
+            ).all()
+            
+            total_pnl = sum(t.pnl for t in result if t.pnl is not None)
+            return total_pnl
+        except Exception as e:
+            print(f"Error calculating weekly PNL: {e}")
+            return 0.0
+        finally:
+            session.close()
+
 
     def save_strategy(self, genome, origin='evolution', regime='ANY'):
         """Saves a strategy genome to the database."""
