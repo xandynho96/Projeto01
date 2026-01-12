@@ -13,6 +13,13 @@ import json
 from datetime import datetime
 import json
 from datetime import datetime
+import sys
+import os
+
+# Fix for PyInstaller ModuleNotFoundError
+if getattr(sys, 'frozen', False):
+    sys.path.append(sys._MEIPASS)
+
 import ai_brain # Force PyInstaller to bundle explicitly (Import BEFORE trader)
 import pandas as pd # Force PyInstaller to bundle
 from trader import BitcoinTrader # Force PyInstaller to bundle

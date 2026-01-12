@@ -93,7 +93,7 @@ class BitcoinTrader:
         df_1m = pd.merge_asof(df_1m.sort_values('timestamp'), df_5m.sort_values('timestamp'), on='timestamp', direction='backward')
         df_1m = pd.merge_asof(df_1m.sort_values('timestamp'), df_15m.sort_values('timestamp'), on='timestamp', direction='backward')
         
-        df_1m.fillna(method='ffill', inplace=True)
+        df_1m.ffill(inplace=True)
         df_1m.fillna(0, inplace=True)
         
         # 5. TA on 1m
@@ -298,7 +298,7 @@ class BitcoinTrader:
             # Use User Settings
             # 'amount' is treated as MARGIN (Collateral) now, per user expectation.
             margin_usd = float(self.user_settings.get('amount', 20.0))
-            leverage = float(self.user_settings.get('leverage', 1.0))
+            leverage = int(float(self.user_settings.get('leverage', 1.0)))
             
             # Effective Position Size = Margin * Leverage
             total_position_usd = margin_usd * leverage
@@ -350,7 +350,7 @@ class BitcoinTrader:
             self.logger.info(f"🚀 Executando entrada {signal.upper()} de {amount_btc:.5f} BTC...")
             entry_order = self.dm.execute_order(config.SYMBOL, signal, amount_btc, type='market', params=entry_params)
             
-            if entry_order:
+            if entry_order and 'id' in entry_order:
                 self.logger.info(f"✅ Entrada Executada. ID: {entry_order['id']}")
                 self.logger.info(f"   (Stop Loss anexado em {sl_price:.2f})")
                 
@@ -373,7 +373,8 @@ class BitcoinTrader:
                 self.dm.execute_order(config.SYMBOL, tp_side, amount_btc, type='limit', price=tp_price, params=tp_params)
                 
             else:
-                self.logger.error("❌ Ordem de entrada falhou.")
+                error_msg = entry_order.get('error', 'Unknown Error') if entry_order else 'No Response'
+                self.logger.error(f"❌ Ordem de entrada falhou. Motivo: {error_msg}")
         
     def run(self):
         self.logger.info("Bot rodando. Pressione Ctrl+C para parar.")

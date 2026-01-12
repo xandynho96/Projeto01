@@ -256,6 +256,8 @@ class AIBrain:
         # Handle Scaling mismatch: If scaler expects X features but we have Y
         # If we just retrained, scaler is updated.
         # If we loaded old scaler, it might crash.
+        try:
+            scaled_data = self.scaler.transform(data)
         except ValueError as e:
              print(f"⚠️ Scaler Mismatch in Batch Prediction: {e}")
              self.scaler = MinMaxScaler(feature_range=(0, 1))
@@ -360,8 +362,8 @@ class AIBrain:
             print("🔄 Resetting Model and Scaler to force retraining...")
             self.scaler = MinMaxScaler(feature_range=(0, 1))
             self.model = None # Force retrain
-            # We can't predict now. Return current price.
-            return current_price
+            # We can't predict now. Return 0.0 (Neutral) to trigger retrain on next loop.
+            return 0.0
         
         # Reshape for model
         # Input shape: (1, sequence_length, features)

@@ -176,7 +176,7 @@ class DataManager:
             df_1m = pd.merge_asof(df_1m, df_15m, on='timestamp', direction='backward')
             
         # Fill NaNs (for early candles where 5m/15m might not align perfectly or start later)
-        df_1m.fillna(method='ffill', inplace=True)
+        df_1m.ffill(inplace=True)
         df_1m.fillna(0, inplace=True)
         
         print(f"✅ Multi-Timeframe Merge Complete. Shape: {df_1m.shape}")
@@ -373,7 +373,7 @@ class DataManager:
             
             # Add Leverage to params
             if hasattr(self, 'leverage') and self.leverage > 1:
-                params['leverage'] = self.leverage
+                params['leverage'] = int(self.leverage) # Force int for Kraken API
                 
             # Kraken Spot specific handling for Stop/TP
             # if type == 'stop-loss' or type == 'take-profit':

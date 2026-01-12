@@ -55,7 +55,15 @@ def build_executable():
         '--add-data=crypto_data.db;.', 
         '--add-data=bitcoin_ai_model.pkl;.', 
         '--add-data=scaler.pkl;.', 
-        '--add-data=app_icon.png;.', 
+        '--add-data=app_icon.png;.',
+
+        # Force Include Source Files (Fixes ModuleNotFoundError)
+        '--add-data=ai_brain.py;.',
+        '--add-data=trader.py;.',
+        '--add-data=technical_analysis.py;.',
+        '--add-data=data_manager.py;.',
+        '--add-data=config.py;.',
+        '--add-data=logger.py;.',
     ]
     
     # Run PyInstaller
