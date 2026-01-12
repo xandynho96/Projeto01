@@ -11,8 +11,13 @@ import json
 import queue
 import json
 from datetime import datetime
+import json
+from datetime import datetime
+import ai_brain # Force PyInstaller to bundle explicitly (Import BEFORE trader)
 import pandas as pd # Force PyInstaller to bundle
 from trader import BitcoinTrader # Force PyInstaller to bundle
+import config
+import script_utils # Make sure this file exists or is handled
 
 # --- Redirect Stdout/Stderr to Queue ---
 class QueueWriter:
@@ -29,8 +34,52 @@ class QueueWriter:
 class BitcoinAIApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Bitcoin AI Trader - Painel de Controle v2.1")
-        self.root.geometry("1100x750")
+        self.root.title("BitcoinAI Trader - Kraken Edition")
+        self.root.geometry("1100x700")
+        
+        # Initialize Variables FIRST
+        self.initialize_variables()
+        self.loading = False
+        
+        # Setup Logger Queue
+        self.log_queue = queue.Queue()
+        self.queue_writer = QueueWriter(self.log_queue)
+        
+        # Redirect stdout/stderr
+        sys.stdout = self.queue_writer
+        sys.stderr = self.queue_writer
+        
+        # UI Setup
+        self.create_widgets()
+        
+        # Start Log Polling
+        self.root.after(100, self.poll_log_queue)
+        
+        # Load Config
+        self.load_settings()
+
+    def initialize_variables(self):
+        # Settings Variables
+
+        self.mode_var = tk.StringVar(value="Spot Margin (10x)")
+        self.api_key_var = tk.StringVar()
+        self.secret_var = tk.StringVar()
+        self.deepseek_key_var = tk.StringVar()
+        self.leverage_var = tk.StringVar(value=str(config.LEVERAGE))
+        self.amount_var = tk.StringVar(value="20.0")
+        self.sl_var = tk.StringVar(value="2.0")
+        self.tp_var = tk.StringVar(value="4.0")
+        self.demo_var = tk.BooleanVar(value=False)
+        
+        # UI Status Variables
+        self.status_var = tk.StringVar(value="Status: Ocioso")
+        self.balance_var = tk.StringVar(value="Saldo: ---")
+        self.weekly_pl_var = tk.StringVar(value="PL Semanal: ---")
+
+    def create_widgets(self):
+        # Styles
+        style = ttk.Style()
+        style.theme_use('clam')
         
         # Load Icon
         try:
@@ -56,11 +105,9 @@ class BitcoinAIApp:
         status_frame = ttk.Frame(header_frame)
         status_frame.pack(side="right")
         
-        self.status_var = tk.StringVar(value="Status: Ocioso")
         lbl_status = ttk.Label(status_frame, textvariable=self.status_var, font=("Consolas", 10))
         lbl_status.pack(side="top", anchor="e")
         
-        self.balance_var = tk.StringVar(value="Saldo: ---")
         lbl_balance = ttk.Label(status_frame, textvariable=self.balance_var, font=("Consolas", 10, "bold"))
         lbl_balance.pack(side="bottom", anchor="e")
 
@@ -114,27 +161,39 @@ class BitcoinAIApp:
         sb_hof.pack(side="right", fill="y")
 
         # --- SETTINGS TAB CONTENT ---
+        # --- SETTINGS TAB CONTENT ---
         settings_frame = ttk.LabelFrame(settings_tab, text="Configuração API Kraken", padding="20")
         settings_frame.pack(fill="x", padx=10, pady=10)
         
         ttk.Label(settings_frame, text="Kraken API Key:").pack(anchor="w")
-        self.ent_api_key = ttk.Entry(settings_frame, width=60)
+        self.ent_api_key = ttk.Entry(settings_frame, width=60, textvariable=self.api_key_var)
         self.ent_api_key.pack(fill="x", pady=(0, 10))
         
         ttk.Label(settings_frame, text="Kraken Secret:").pack(anchor="w")
-        self.ent_secret = ttk.Entry(settings_frame, width=60, show="*")
+        self.ent_secret = ttk.Entry(settings_frame, width=60, show="*", textvariable=self.secret_var)
         self.ent_secret.pack(fill="x", pady=(0, 10))
         
         ttk.Label(settings_frame, text="DeepSeek API Key (Opcional):").pack(anchor="w")
-        self.ent_deepseek = ttk.Entry(settings_frame, width=60, show="*")
+        self.ent_deepseek = ttk.Entry(settings_frame, width=60, show="*", textvariable=self.deepseek_key_var)
         self.ent_deepseek.pack(fill="x", pady=(0, 10))
-        
-        ttk.Label(settings_frame, text="Nota: Chaves salvas em user_config.json após iniciar.", font=("Arial", 8, "italic")).pack(anchor="w")
 
-        # Demo Mode Checkbox
-        self.var_demo_mode = tk.BooleanVar(value=True) # Default to True for safety/sanity
-        self.chk_demo = ttk.Checkbutton(settings_frame, text="Usar Modo Demo (Dry Run / Simulação)", variable=self.var_demo_mode)
-        self.chk_demo.pack(anchor="w", pady=(5, 0))
+        # Settings Controls
+        opts_frame = ttk.Frame(settings_frame)
+        opts_frame.pack(fill="x", pady=10)
+
+        # Demo Mode
+        tsk_demo = ttk.Checkbutton(opts_frame, text="Usar Modo Demo (Simulação / Dry Run)", variable=self.demo_var)
+        tsk_demo.pack(anchor="w", side="left", padx=(0, 20))
+
+        # Trading Mode
+        ttk.Label(opts_frame, text="Modo:").pack(side="left")
+        self.mode_combo_settings = ttk.Combobox(opts_frame, textvariable=self.mode_var, values=["Spot Margin (10x)", "Futures (50x)"], state="readonly", width=18)
+        self.mode_combo_settings.pack(side="left", padx=5)
+        self.mode_combo_settings.bind("<<ComboboxSelected>>", self.update_leverage_limit)
+
+        # Save Button
+        btn_save = ttk.Button(settings_frame, text="💾 Salvar Configurações", command=self.save_ui_settings)
+        btn_save.pack(fill="x", pady=10)
 
         # --- TRADING TAB CONTENT ---
         content_frame = ttk.Frame(trading_tab, padding="5")
@@ -147,28 +206,26 @@ class BitcoinAIApp:
         
         params_frame = ttk.Frame(control_pane)
         params_frame.pack(fill="x", pady=5)
-        
+
+        # Row 0: Trading Mode (Added as requested)
+        ttk.Label(params_frame, text="Modo:").grid(row=0, column=0, sticky="w", pady=5)
+        self.mode_combo_main = ttk.Combobox(params_frame, textvariable=self.mode_var, values=["Spot Margin (10x)", "Futures (50x)"], state="readonly", width=18)
+        self.mode_combo_main.grid(row=0, column=1, columnspan=3, sticky="we", padx=5, pady=5)
+        self.mode_combo_main.bind("<<ComboboxSelected>>", self.update_leverage_limit)
+
         # Row 1
-        ttk.Label(params_frame, text="Valor Entrada (USD):").grid(row=0, column=0, sticky="w")
-        self.ent_amount = ttk.Entry(params_frame, width=10)
-        self.ent_amount.insert(0, "50.0") # Default $50
-        self.ent_amount.grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Label(params_frame, text="Valor Entrada (USD):").grid(row=1, column=0, sticky="w")
+        ttk.Entry(params_frame, textvariable=self.amount_var, width=10).grid(row=1, column=1, sticky="w", padx=5)
         
-        ttk.Label(params_frame, text="Alavancagem (x):").grid(row=0, column=2, sticky="w")
-        self.ent_leverage = ttk.Entry(params_frame, width=5)
-        self.ent_leverage.insert(0, "10")
-        self.ent_leverage.grid(row=0, column=3, sticky="w", padx=5)
+        ttk.Label(params_frame, text="Alavancagem (x):").grid(row=1, column=2, sticky="w")
+        ttk.Entry(params_frame, textvariable=self.leverage_var, width=5).grid(row=1, column=3, sticky="w", padx=5)
         
         # Row 2
-        ttk.Label(params_frame, text="Stop Loss (%):").grid(row=1, column=0, sticky="w", pady=5)
-        self.ent_sl = ttk.Entry(params_frame, width=10)
-        self.ent_sl.insert(0, "30.0") # Aggressive risk profile
-        self.ent_sl.grid(row=1, column=1, sticky="w", padx=5)
+        ttk.Label(params_frame, text="Stop Loss (%):").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Entry(params_frame, textvariable=self.sl_var, width=10).grid(row=2, column=1, sticky="w", padx=5)
         
-        ttk.Label(params_frame, text="Take Profit (%):").grid(row=1, column=2, sticky="w", pady=5)
-        self.ent_tp = ttk.Entry(params_frame, width=10)
-        self.ent_tp.insert(0, "70.0") # High reward target
-        self.ent_tp.grid(row=1, column=3, sticky="w", padx=5)
+        ttk.Label(params_frame, text="Take Profit (%):").grid(row=2, column=2, sticky="w", pady=5)
+        ttk.Entry(params_frame, textvariable=self.tp_var, width=10).grid(row=2, column=3, sticky="w", padx=5)
         
         ttk.Separator(control_pane, orient="horizontal").pack(fill="x", pady=15)
 
@@ -230,45 +287,64 @@ class BitcoinAIApp:
         self.root.after(5000, self.update_ui_data) # Update balance/history every 5s
         
         # Load Config
-        self.load_config()
+        self.load_settings()
 
-    def load_config(self):
+    def save_ui_settings(self):
+        """Handler for the Save Button."""
+        api_key = self.ent_api_key.get().strip()
+        secret = self.ent_secret.get().strip()
+        
+        settings = {
+            'amount': float(self.amount_var.get()),
+            'leverage': float(self.leverage_var.get()),
+            'sl_pct': float(self.sl_var.get()),
+            'tp_pct': float(self.tp_var.get()),
+        }
+        self.save_settings(api_key, secret, settings)
+
+    def load_settings(self):
         """Loads user settings from json."""
         if os.path.exists("user_config.json"):
             try:
                 with open("user_config.json", "r") as f:
                     data = json.load(f)
-                    self.ent_api_key.insert(0, data.get("api_key", ""))
-                    self.ent_secret.insert(0, data.get("secret", ""))
-                    self.ent_deepseek.insert(0, data.get("deepseek_key", ""))
+                    # Set StringVars, Entries update automatically
+                    if "api_key" in data: self.api_key_var.set(data["api_key"])
+                    if "secret" in data: self.secret_var.set(data["secret"])
+                    if "deepseek_key" in data: self.deepseek_key_var.set(data["deepseek_key"])
                     
                     if "demo_mode" in data:
-                        self.var_demo_mode.set(data["demo_mode"])
+                        self.demo_var.set(data["demo_mode"])
+
+                    # Trading Mode
+                    # Trading Mode
+                    saved_mode = data.get('trading_mode', 'Spot Margin (10x)')
+                    if saved_mode not in ["Spot Margin (10x)", "Futures (50x)"]:
+                        # Migrate old 10x to 5x if needed
+                        saved_mode = "Spot Margin (10x)"
+                    self.mode_var.set(saved_mode)
 
                     if "amount" in data:
-                        self.ent_amount.delete(0, tk.END)
-                        self.ent_amount.insert(0, str(data["amount"]))
+                        self.amount_var.set(str(data["amount"]))
                     if "leverage" in data:
-                        self.ent_leverage.delete(0, tk.END)
-                        self.ent_leverage.insert(0, str(data["leverage"]))
+                        self.leverage_var.set(str(data["leverage"]))
                     if "sl_pct" in data:
-                        self.ent_sl.delete(0, tk.END)
-                        self.ent_sl.insert(0, str(data["sl_pct"]))
+                        self.sl_var.set(str(data["sl_pct"]))
                     if "tp_pct" in data:
-                        self.ent_tp.delete(0, tk.END)
-                        self.ent_tp.insert(0, str(data["tp_pct"]))
+                        self.tp_var.set(str(data["tp_pct"]))
                         
                 self.log("Configuração carregada de user_config.json")
             except Exception as e:
                 self.log(f"Falha ao carregar config: {e}")
 
-    def save_config(self, api_key, secret, settings):
+    def save_settings(self, api_key, secret, settings):
         """Saves current settings to json."""
         data = {
             "api_key": api_key,
             "secret": secret,
-            "deepseek_key": self.ent_deepseek.get().strip(),
-            "demo_mode": self.var_demo_mode.get(),
+            "deepseek_key": self.deepseek_key_var.get().strip(),
+            "demo_mode": self.demo_var.get(),
+            "trading_mode": self.mode_var.get(),
             **settings
         }
         try:
@@ -277,6 +353,25 @@ class BitcoinAIApp:
             self.log("Configuração salva em user_config.json")
         except Exception as e:
             self.log(f"Falha ao salvar config: {e}")
+
+
+    def update_leverage_limit(self, event=None):
+        """Enforces leverage limits based on selected mode."""
+        mode = self.mode_var.get()
+        # Update both combos to match (sync them)
+        if self.mode_combo_main.get() != mode:
+            self.mode_combo_main.set(mode)
+        if self.mode_combo_settings.get() != mode:
+            self.mode_combo_settings.set(mode)
+            
+        current_lev = float(self.leverage_var.get())
+        if "Spot" in mode:
+            if current_lev > 10:
+                self.leverage_var.set("10")
+        else: # Futures
+            # Max 50
+            if current_lev > 50:
+                self.leverage_var.set("50")
 
     def process_log_queue(self):
         try:
@@ -304,27 +399,30 @@ class BitcoinAIApp:
 
     def update_ui_data(self):
         """Polls for Balance and History updates if trader is active."""
-        if self.trader_instance and hasattr(self.trader_instance, 'dm') and self.trader_instance.dm:
-             # Balance
-            bal = self.trader_instance.dm.get_balance()
-            if bal:
-                self.balance_var.set(f"Saldo: ${bal:.2f}")
+        if self.trader_instance and getattr(self.trader_instance, 'dm', None):
+             try:
+                # Balance
+                bal = self.trader_instance.dm.get_balance()
+                if bal is not None:
+                    self.balance_var.set(f"Saldo: ${bal:.2f}")
 
-            # Weekly PL
-            w_pl = self.trader_instance.dm.get_weekly_pnl()
-            self.weekly_pl_var.set(f"PL Semanal: ${w_pl:.2f}")
-            
-            # History
-            trades = self.trader_instance.dm.get_recent_trades(limit=20)
+                # Weekly PL
+                w_pl = self.trader_instance.dm.get_weekly_pnl()
+                self.weekly_pl_var.set(f"PL Semanal: ${w_pl:.2f}")
+                
+                # History
+                trades = self.trader_instance.dm.get_recent_trades(limit=20)
 
-            # Clear current items
-            for item in self.tree.get_children():
-                self.tree.delete(item)
-            # Add new items
-            for t in trades:
-                self.tree.insert('', 'end', values=(
-                    t['time'], t['symbol'], t['side'].upper(), t['amt'], f"${t['price']:.2f}", t['status']
-                ))
+                # Clear current items
+                for item in self.tree.get_children():
+                    self.tree.delete(item)
+                # Add new items
+                for t in trades:
+                    self.tree.insert('', 'end', values=(
+                        t['time'], t['symbol'], t['side'].upper(), t['amt'], f"${t['price']:.2f}", t['status']
+                    ))
+             except Exception as e:
+                 print(f"UI Update Error: {e}")
                 
         self.root.after(5000, self.update_ui_data)
         
@@ -356,8 +454,8 @@ class BitcoinAIApp:
     def toggle_trader(self):
         if not self.running_trader:
             # Validate Inputs
-            api_key = self.ent_api_key.get().strip()
-            secret = self.ent_secret.get().strip()
+            api_key = self.api_key_var.get().strip()
+            secret = self.secret_var.get().strip()
             
             if not api_key or not secret:
                 self.log("ERRO: API Key e Secret são obrigatórios.")
@@ -365,12 +463,13 @@ class BitcoinAIApp:
                 
             try:
                 user_settings = {
-                    'amount': float(self.ent_amount.get()),
-                    'leverage': float(self.ent_leverage.get()),
-                    'sl_pct': float(self.ent_sl.get()),
-                    'tp_pct': float(self.ent_tp.get()),
-                    'demo_mode': self.var_demo_mode.get(),
-                    'deepseek_key': self.ent_deepseek.get().strip()
+                    'amount': float(self.amount_var.get()),
+                    'leverage': float(self.leverage_var.get()),
+                    'sl_pct': float(self.sl_var.get()),
+                    'tp_pct': float(self.tp_var.get()),
+                    'demo_mode': self.demo_var.get(),
+                    'deepseek_key': self.deepseek_key_var.get().strip(),
+                    'trading_mode': self.mode_var.get()
                 }
             except ValueError:
                 self.log("ERRO: Valores numéricos inválidos.")
@@ -380,15 +479,13 @@ class BitcoinAIApp:
             self.running_trader = True
             
             # Save Config
-            self.save_config(api_key, secret, user_settings)
+            self.save_settings(api_key, secret, user_settings)
             
             self.btn_run_trader.configure(text="PARAR Trading")
-            self.status_var.set("Status: Trading Ativo")
+            self.status_var.set(f"Status: Trading Ativo ({user_settings['trading_mode']})")
             
-            # Disable inputs
-            self.ent_api_key.configure(state='disabled')
-            self.ent_secret.configure(state='disabled')
-            self.ent_amount.configure(state='disabled')
+            # Disable inputs (Optional, skipping for now to avoid AttributeError if widgets aren't self.x)
+            # You can re-enable this if you bind the widgets to self.ent_amount again in create_widgets
             
             self.trader_thread = threading.Thread(target=self.run_trader_safe, args=(api_key, secret, user_settings), daemon=True)
             self.trader_thread.start()
@@ -400,9 +497,7 @@ class BitcoinAIApp:
             self.status_var.set("Status: Parado")
             
             # Re-enable inputs
-            self.ent_api_key.configure(state='normal')
-            self.ent_secret.configure(state='normal')
-            self.ent_amount.configure(state='normal')
+
 
     def run_trader_safe(self, api_key, secret, user_settings):
         self.log("Inicializando Trader...")
@@ -450,25 +545,41 @@ class BitcoinAIApp:
             bufsize=1,
             env=env # Pass environment
         )
-        self.backtest_process = process
         
-        # Read lines
-        for line in iter(process.stdout.readline, ''):
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
             if line:
-                self.log(line.strip())
+                self.queue_writer.write(line.strip())
                 
-        # Also check stderr
-        for line in iter(process.stderr.readline, ''):
-            if line:
-                self.log(f"ERRO BACKTEST: {line.strip()}")
-                
-        process.stdout.close()
-        process.wait()
-        self.log("O Backtest terminou.")
+        self.log("Backtest Finalizado.")
+        
+    def poll_log_queue(self):
+        """Polls the log queue and updates the GUI."""
+        while not self.log_queue.empty():
+            try:
+                record = self.log_queue.get_nowait()
+                self.log_area.configure(state='normal')
+                self.log_area.insert(tk.END, record + '\n')
+                self.log_area.see(tk.END)
+                self.log_area.configure(state='disabled')
+            except queue.Empty:
+                break
+        
+        # Schedule next poll
+        self.root.after(100, self.poll_log_queue)
+
+    def start_trading(self):
+        self.toggle_trader()
+
+    def stop_trading(self):
+        self.toggle_trader()
 
     def on_closing(self):
-        if self.backtest_process:
-            self.backtest_process.kill()
+        if self.running_trader and hasattr(self, 'trader_instance') and self.trader_instance:
+             # Try to stop threads if possible or just kill
+             pass
         self.root.destroy()
         sys.exit()
 

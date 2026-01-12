@@ -1,9 +1,10 @@
 {
-    "api_key": "RwWAOMd5PBjh1XaacpIyEmXMLkE/GxRUvAoWZLrlvgEdyUJULl6tBV/y",
-    "secret": "in+9R4I4haEXhlPv9UjnD0Wsq4/FIskF/bOBfJPA741fl8YR+YqVSmm+iRDWCYZ8H3uDx2VCC/E63I6lDN3s3LCd",
+    "api_key": "F0bVhdPmOHIPaspg06uW9C7iHC5KQRxNK4u1/RpV7qHFWP+k+XsyD1lm",
+    "secret": "gVXXXMbpjchhfcpXJpK1anTIIY7ezUSeWn9+vzW2oGQfbf1E+v6Le43R00vmt0MmmCqVdaAf/usYS1ImaO62Vw==",
     "demo_mode": true,
     "amount": 50.0,
-    "leverage": 50.0,
+    "leverage": 10.0,
     "sl_pct": 30.0,
-    "tp_pct": 70.0
+    "tp_pct": 70.0,
+    "trading_mode": "Spot Margin (10x)"
 }

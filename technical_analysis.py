@@ -16,6 +16,9 @@ class TechnicalAnalysis:
         self._add_trend_indicators()
         self._add_volatility_indicators()
         self._add_candlestick_patterns()
+        self._add_candlestick_patterns()
+        self._add_chart_patterns() # New Advanced Patterns
+        self._add_trend_hierarchy() # New Trend Hierarchy
         self._add_fibonacci_levels()
         return self.df
 
@@ -231,6 +234,92 @@ class TechnicalAnalysis:
         
         # Distance to BB Lower (Oversold Support)
         self.df['dist_bb_lower'] = (self.df['close'] - self.df['bb_low']) / self.df['close']
+
+    def _add_trend_hierarchy(self):
+        """
+        Determines Trend Alignment (Micro vs Macro).
+        Macro: EMA 200 direction.
+        Micro: EMA 21 vs EMA 50.
+        """
+        ema_200 = self.df['ema_200']
+        ema_50 = self.df['ema_50']
+        ema_21 = self.df['ema_21']
+        close = self.df['close']
+        
+        # Macro Trend (1 = Bullish, -1 = Bearish)
+        macro_trend = np.where(close > ema_200, 1, -1)
+        
+        # Micro Trend (1 = Bullish, -1 = Bearish)
+        micro_trend = np.where(ema_21 > ema_50, 1, -1)
+        
+        # Alignment Score (2 = Strong Bull, -2 = Strong Bear, 0 = Mixed/Choppy)
+        self.df['trend_score'] = macro_trend + micro_trend
+        
+        # Interaction
+        self.df['trend_aligned'] = (macro_trend == micro_trend).astype(int)
+
+    def _add_chart_patterns(self):
+        """
+        Aims to detect complex chart patterns like OCO (Head & Shoulders) and Triangles.
+        Note: Precise detection is hard in vectorized code. We use simplified logic suitable for ML features.
+        """
+        high = self.df['high']
+        low = self.df['low']
+        close = self.df['close'] # Fixed: Was referencing undefined 'close'
+        
+        # 1. TRIANGLE / SQUEEZE DETECTION
+        # Logic: Lower Highs AND Higher Lows over a rolling window.
+        window = 10
+        rolling_max = high.rolling(window=window).max()
+        rolling_min = low.rolling(window=window).min()
+        
+        # Slope check (simplified)
+        # Highs are falling?
+        high_slope = high.diff(3).rolling(window=10).mean()
+        # Lows are rising?
+        low_slope = low.diff(3).rolling(window=10).mean()
+        
+        # Potential Triangle: Highs falling (<0) AND Lows rising (>0) AND Volatility Dropping
+        is_triangle = (high_slope < 0) & (low_slope > 0) & (self.df['bb_width'] < 0.01)
+        self.df['pattern_triangle'] = is_triangle.astype(int)
+        
+        # 2. OCO (Head and Shoulders - Bearish)
+        # Peak (Left Shoulder) -> Higher Peak (Head) -> Lower Peak (Right Shoulder)
+        # This is extremely hard to vectorise perfectly. 
+        # We will use "Pivot Highs" feature for the AI to learn instead of hardcoding.
+        
+        # Identify Local Highs (Fractals)
+        # Standard Fractal: High[i] > High[i-2]...High[i+2]
+        # We can pass "Is Fractal High" as a feature.
+        
+        # Vectorized Fractal (5 candle)
+        # We need future data for perfect fractals, but for trading signal at Time T, we look at lag.
+        # So we detect if T-2 was a fractal high.
+        
+        # Shifted comparison for backtest/realtime safety (can't know T+2 at T)
+        # At Time T, we know if T-2 was a High relative to T-4, T-3, T-1, T.
+        
+        is_fractal_high = (
+            (high.shift(2) > high.shift(3)) &
+            (high.shift(2) > high.shift(4)) &
+            (high.shift(2) > high.shift(1)) &
+            (high.shift(2) > high)
+        )
+        self.df['is_pivot_high'] = is_fractal_high.astype(int)
+        
+        is_fractal_low = (
+            (low.shift(2) < low.shift(3)) &
+            (low.shift(2) < low.shift(4)) &
+            (low.shift(2) < low.shift(1)) &
+            (low.shift(2) < low)
+        )
+        self.df['is_pivot_low'] = is_fractal_low.astype(int)
+        
+        # The AI (RandomForest) can learn OCO patterns if we feed it the SEQUENCE of Pivots.
+        # We will feed 'time_since_last_pivot' and 'price_of_last_pivot' to help it map geometry.
+        
+        self.df['last_pivot_high_price'] = self.df['high'].where(is_fractal_high).ffill()
+        self.df['last_pivot_low_price'] = self.df['low'].where(is_fractal_low).ffill() 
 
 if __name__ == "__main__":
     # Test script

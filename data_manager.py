@@ -61,32 +61,44 @@ class DataManager:
             
         self.leverage = config.LEVERAGE # Default leverage
 
-    def connect_exchange(self, api_key, secret, demo_mode=False):
-        """Connects to Kraken Spot (Margin) with provided keys."""
+    def connect_exchange(self, api_key, secret, demo_mode=False, trading_mode="Spot Margin"):
+        """
+        Connects to Kraken Spot or Futures based on trading_mode.
+        trading_mode: "Spot Margin (10x)" or "Futures (50x)"
+        """
         self.demo_mode = demo_mode
+        self.trading_mode = trading_mode
+        is_futures = "Futures" in trading_mode
+        
+        print(f"🔌 Connecting to Kraken [{trading_mode}] (Demo: {demo_mode})...")
+        
         try:
             exchange_config = {
                 'apiKey': api_key,
                 'secret': secret,
                 'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'spot', # Kraken Spot
-                }
             }
             
-            if demo_mode:
-                print("⚠️  DEMO MODE REQUESTED: Kraken Spot does not have a public Sandbox.")
-                print("⚠️  Running in DRY-RUN/PAPER-TRADING mode (No real orders will be sent).")
-                # We can still connect to public data
-                self.exchange = ccxt.kraken(exchange_config)
-                # But we might need to flag the bot to NOT send create_order if demo_mode is True
-                # For now, let's just connect standard kraken.
-                # self.exchange.set_sandbox_mode(True) # Not supported for Spot usually
+            if is_futures:
+                # FUTURES CONNECTION
+                if demo_mode:
+                    print("⚠️  USING FUTURES SANDBOX ⚠️")
+                    self.exchange = ccxt.krakenfutures(exchange_config)
+                    self.exchange.set_sandbox_mode(True)
+                else:
+                    self.exchange = ccxt.krakenfutures(exchange_config)
             else:
-                self.exchange = ccxt.kraken(exchange_config)
+                # SPOT CONNECTION
+                exchange_config['options'] = {'defaultType': 'spot'}
+                if demo_mode:
+                     print("⚠️  DEMO MODE REQUESTED: Kraken Spot (Dry Run).")
+                     # Spot doesn't have Sandbox usually active for public
+                     self.exchange = ccxt.kraken(exchange_config)
+                else:
+                    self.exchange = ccxt.kraken(exchange_config)
             
             self.exchange.load_markets()
-            print("Connected to Kraken Spot (Margin Enabled).")
+            print(f"Connected to Kraken {'Futures' if is_futures else 'Spot'}.")
             return True
         except Exception as e:
             print(f"Failed to connect to Kraken: {e}")
@@ -112,6 +124,63 @@ class DataManager:
             if self.exchange and "does not have market symbol" in str(e):
                 print("DEBUG: Available Symbols:", [m for m in self.exchange.markets.keys() if 'BTC' in m or 'XBT' in m])
             return pd.DataFrame() # Empty DF
+
+    def fetch_multi_timeframe_data(self, symbol=config.SYMBOL, limit=config.LIMIT):
+        """
+        Fetches 1m data and enriches it with 5m and 15m indicators.
+        Returns a single DataFrame with 1m granularity but higher timeframe context.
+        """
+        # 1. Fetch Data
+        df_1m = self.fetch_historical_data(symbol, '1m', limit)
+        if df_1m.empty: return df_1m
+        
+        # Calculate 1m indicators (Trader usually does this, but we can do it here or let Trader does it)
+        # Let's let Trader/AI Brain handle 1m indicators to avoid double calcs, 
+        # BUT we need 5m/15m indicators pre-calculated.
+        
+        # Fetch Higher Timeframes
+        # We need enough 5m/15m candles to cover the 1m range
+        limit_htf = limit // 5 + 100 
+        df_5m = self.fetch_historical_data(symbol, '5m', limit_htf)
+        df_15m = self.fetch_historical_data(symbol, '15m', limit_htf)
+        
+        from technical_analysis import TechnicalAnalysis # Local import to avoid circular dep if any
+        
+        # 2. Process 5m
+        if not df_5m.empty:
+            ta_5m = TechnicalAnalysis(df_5m)
+            df_5m = ta_5m.add_all_indicators()
+            # Select relevant columns and rename
+            cols_to_keep = ['timestamp', 'rsi', 'macd', 'bb_width', 'ema_200', 'supertrend']
+            df_5m = df_5m[cols_to_keep].copy()
+            df_5m.columns = ['timestamp'] + [f"{c}_5m" for c in cols_to_keep if c != 'timestamp']
+        
+        # 3. Process 15m
+        if not df_15m.empty:
+            ta_15m = TechnicalAnalysis(df_15m)
+            df_15m = ta_15m.add_all_indicators()
+            cols_to_keep = ['timestamp', 'rsi', 'macd', 'bb_width', 'ema_200', 'supertrend']
+            df_15m = df_15m[cols_to_keep].copy()
+            df_15m.columns = ['timestamp'] + [f"{c}_15m" for c in cols_to_keep if c != 'timestamp']
+
+        # 4. Merge (Forward Fill)
+        # Sort by timestamp
+        df_1m = df_1m.sort_values('timestamp')
+        
+        if not df_5m.empty:
+            df_5m = df_5m.sort_values('timestamp')
+            df_1m = pd.merge_asof(df_1m, df_5m, on='timestamp', direction='backward')
+            
+        if not df_15m.empty:
+            df_15m = df_15m.sort_values('timestamp')
+            df_1m = pd.merge_asof(df_1m, df_15m, on='timestamp', direction='backward')
+            
+        # Fill NaNs (for early candles where 5m/15m might not align perfectly or start later)
+        df_1m.fillna(method='ffill', inplace=True)
+        df_1m.fillna(0, inplace=True)
+        
+        print(f"✅ Multi-Timeframe Merge Complete. Shape: {df_1m.shape}")
+        return df_1m
 
     def fetch_full_history(self, start_year=2020, symbol=config.SYMBOL, timeframe=config.TIMEFRAME):
         """Fetches full history using yfinance for bulk data (bypassing Kraken limits)."""
@@ -297,10 +366,9 @@ class DataManager:
                      params['stopPrice'] = price
                 price = None
                 
-            # Spot Margin does not use 'reduceOnly' param usually. Remove it if present to avoid errors.
-            if 'reduceOnly' in params:
-                del params['reduceOnly']
-
+            # Spot Margin DOES support 'reduceOnly' for Limit orders (verified).
+            # Keeping it if passed.
+            
             print(f"Executing {side} {type} order for {amount} {symbol}...")
             
             # Add Leverage to params
@@ -335,7 +403,7 @@ class DataManager:
             return order
         except Exception as e:
             print(f"Error executing order: {e}")
-            return None
+            return {'error': str(e)}
 
     def get_balance(self):
         """Fetches total account balance (USD/USDT usually)"""
@@ -349,14 +417,20 @@ class DataManager:
             # Let's try to get total approximate USD value or free margin
             
             # Common structure: balance['total']['USD'] or balance['free']['USD']
-            # For simplicity, returning total USD collateral
-            if 'USD' in balance['total']:
-                return balance['total']['USD']
-            elif 'USDT' in balance['total']:
-                return balance['total']['USDT']
+            # Prioritize currency with actual balance
+            total = balance.get('total', {})
+            usd_bal = total.get('USD', 0.0)
+            usdt_bal = total.get('USDT', 0.0)
+            
+            if usd_bal > 0:
+                return usd_bal
+            elif usdt_bal > 0:
+                return usdt_bal
             else:
-                # Fallback to total equity if available
-                return balance.get('info', {}).get('totalWalletBalance', 0.0) # Example key
+                return usd_bal # Return 0.0 if both are empty
+            
+            # Legacy fallback
+            return balance.get('info', {}).get('totalWalletBalance', 0.0)
         except Exception as e:
             print(f"Error fetching balance: {e}")
             return 0.0

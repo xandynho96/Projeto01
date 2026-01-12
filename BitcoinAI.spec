@@ -3,10 +3,10 @@
 
 a = Analysis(
     ['gui_app.py'],
-    pathex=[],
+    pathex=['C:\\Users\\Alexandre\\Documents\\Testes\\Projeto01'],
     binaries=[],
-    datas=[('dashboard.py', '.'), ('crypto_data.db', '.'), ('app_icon.png', '.')],
-    hiddenimports=['pandas', 'numpy', 'sklearn', 'sklearn.utils._cython_blas', 'sklearn.neighbors.typedefs', 'sklearn.neighbors.quad_tree', 'sklearn.tree', 'sklearn.tree._utils', 'ta', 'ccxt', 'sqlalchemy', 'schedule', 'plotly', 'streamlit'],
+    datas=[('dashboard.py', '.'), ('crypto_data.db', '.'), ('bitcoin_ai_model.pkl', '.'), ('scaler.pkl', '.'), ('app_icon.png', '.')],
+    hiddenimports=['pandas', 'numpy', 'sklearn', 'sklearn.utils._cython_blas', 'sklearn.neighbors.typedefs', 'sklearn.neighbors.quad_tree', 'sklearn.tree', 'sklearn.tree._utils', 'ta', 'ccxt', 'sqlalchemy', 'schedule', 'plotly', 'streamlit', 'custom_strategies', 'trader', 'ai_brain', 'technical_analysis', 'logger', 'data_manager', 'config'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

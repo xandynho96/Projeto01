@@ -63,9 +63,17 @@ class StrategyGene:
         if val is None: return False
         
         if self.operator == '<':
-            return val < self.threshold
+            return float(val) < float(self.threshold)
+        elif self.operator == '>':
+            return float(val) > float(self.threshold)
+        elif self.operator == '==':
+             # Handle approximate float equality or exact string/int
+             try:
+                 return abs(float(val) - float(self.threshold)) < 0.0001
+             except:
+                 return str(val) == str(self.threshold)
         else:
-            return val > self.threshold
+            return float(val) > float(self.threshold)
             
     def __repr__(self):
         return f"{self.indicator} {self.operator} {self.threshold}"
@@ -127,9 +135,60 @@ class EvolutionaryOptimizer:
                 raise Exception("CRITICAL: Não foi possível carregar dados.")
 
             self.df = self.df[self.df['timeframe'] == '1m'].copy()
-            # Add indicators
+            
+            # --- FEATURE ENGINEERING: REPLICATE TRADER.PY MEMORY ---
+            print("Evolução: Reconstruindo contexto Multi-Timeframe...")
+            self.df['timestamp'] = pd.to_datetime(self.df['timestamp'])
+            self.df.set_index('timestamp', inplace=True)
+            
+            agg_dict = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}
+            df_5m = self.df.resample('5min').agg(agg_dict).dropna()
+            
+            # Reset
+            self.df.reset_index(inplace=True)
+            df_5m.reset_index(inplace=True)
+            
+            # TA on 1m
             ta = TechnicalAnalysis(self.df)
             self.df = ta.add_all_indicators()
+
+            # TA on 5m
+            ta_5m = TechnicalAnalysis(df_5m)
+            df_5m = ta_5m.add_all_indicators()
+            
+            # Create explicit TREND column for 5m (UP=1, DOWN=-1)
+            # Simple definition: EMA_20 > EMA_50
+            if 'ema_20' in df_5m.columns and 'ema_50' in df_5m.columns:
+                df_5m['trend_5m'] = (df_5m['ema_20'] > df_5m['ema_50']).astype(int) * 2 - 1
+            else:
+                df_5m['trend_5m'] = 0
+
+            # Select and Rename HTF columns
+            cols_keep = ['timestamp', 'rsi', 'macd', 'bb_width', 'ema_200', 'supertrend', 'trend_5m']
+            existing_cols_5m = [c for c in cols_keep if c in df_5m.columns]
+            df_5m = df_5m[existing_cols_5m].copy()
+            
+            # Merge 5m features into 1m DF
+            # NOTE: We rename collisions, e.g., rsi -> rsi_5m
+            df_5m.columns = ['timestamp'] + [f"{c}_5m" if c != 'trend_5m' else 'trend_5m' for c in existing_cols_5m if c != 'timestamp'] # Keep trend_5m as is or suffix
+            
+            # Actually, let's keep suffix consistent with legacy JSON import logic: 'rsi_5m'
+            # But legacy JSON says 'trend_5m', so let's ensure we have that column name.
+            # My previous rename logic was: f"{c}_5m".
+            # So 'trend_5m' -> 'trend_5m_5m' ? No, let's fix the rename logic.
+            
+            new_cols = []
+            for c in existing_cols_5m:
+                if c == 'timestamp': new_cols.append(c)
+                elif c == 'trend_5m': new_cols.append('trend_5m') # Keep exact name for legacy compatibility
+                else: new_cols.append(f"{c}_5m")
+            df_5m.columns = new_cols
+
+            self.df = pd.merge_asof(self.df.sort_values('timestamp'), df_5m.sort_values('timestamp'), on='timestamp', direction='backward')
+            self.df.fillna(method='ffill', inplace=True)
+            self.df.fillna(0, inplace=True)
+            
+            print(f"Dataset Evolutivo Pronto: {self.df.shape}")
             
             # --- NEW: Add Regimes ---
             from market_regime import MarketRegime
@@ -213,6 +272,39 @@ class EvolutionaryOptimizer:
                     
         except Exception as e:
             print(f"⚠️ Falha ao obter estratégias da IA: {e}")
+
+        # 1.5 IMPORT LEGACY STRATEGIES (User Provided)
+        try:
+            import json
+            import os
+            if os.path.exists('legacy_strategies.json'):
+                with open('legacy_strategies.json', 'r') as f:
+                    legacy_data = json.load(f)
+                
+                print(f"📜 Importando {len(legacy_data)} estratégias legadas...")
+                for strat in legacy_data:
+                    genes = []
+                    # Simple flattener for nested rules structure
+                    for rule in strat.get('rules', []):
+                        for cond in rule.get('conditions', []):
+                             # Map keys
+                             ind = cond.get('indicator')
+                             op = cond.get('operator')
+                             val = cond.get('value')
+                             
+                             if ind and op and val is not None:
+                                 # Normalize indicator names if needed (e.g., TREND_5M -> trend_5m)
+                                 ind = ind.lower()
+                                 if ind == 'trend_5m': ind = 'trend_5m' # Assuming this col added
+                                 genes.append(StrategyGene(ind, op, val))
+                    
+                    if genes:
+                        g = Genome(genes)
+                        g.winrate = float(strat.get('winRate', 50.0))
+                        g.origin = "legacy"
+                        self.population.append(g)
+        except Exception as e:
+            print(f"⚠️ Erro ao importar legado: {e}")
 
         # 2. Add HARDCODED SEEDS (Fallback/Baseline)
         # Prevents "0% Winrate" stagnation by providing viable parents

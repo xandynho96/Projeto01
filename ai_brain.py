@@ -59,7 +59,7 @@ class AIBrain:
 
     def _load_or_create_model_sklearn(self):
         from sklearn.ensemble import RandomForestRegressor
-        # n_jobs=1 prevents Windows deadlocks. n_estimators=10 for speed/CPU safety.
+        # Increased complexity for better learning of subtle patterns
         
         # 1. Try Persistent
         if os.path.exists(self.model_path):
@@ -77,8 +77,9 @@ class AIBrain:
              except:
                 pass
 
-        print("Initializing new AI model (RandomForest)...")
-        return RandomForestRegressor(n_estimators=20, n_jobs=1, max_depth=8)
+        print("Initializing new AI model (RandomForest - Enhanced)...")
+        # Increased estimators to 200 and depth to 20 for better "learning" capability
+        return RandomForestRegressor(n_estimators=200, n_jobs=1, max_depth=20, random_state=42)
 
     def _load_or_create_model_tf(self):
         if not HAS_TENSORFLOW: return None
@@ -92,14 +93,36 @@ class AIBrain:
     def build_model(self, input_shape):
         if not HAS_TENSORFLOW: return None
         model = Sequential()
-        model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))
+        model.add(LSTM(units=100, return_sequences=True, input_shape=input_shape)) # Increased units
         model.add(Dropout(0.2))
-        model.add(LSTM(units=50, return_sequences=False))
+        model.add(LSTM(units=100, return_sequences=False))
         model.add(Dropout(0.2))
         model.add(Dense(units=1)) 
         model.compile(optimizer='adam', loss='mean_squared_error')
         self.model = model
         return model
+
+    def _get_feature_list(self, df):
+        """Dynamically builds feature list including Multi-Timeframe columns."""
+        base_features = ['returns', 'rsi', 'macd', 'bb_width', 'adx', 'ema_trend', 
+                         'volatility_change', 'dist_support', 'dist_resistance', 
+                         'pattern_score', 'stoch_rsi_k', 'atr', 'obv_slope',
+                         'trend_score', 'pattern_triangle', 'is_pivot_high', 'is_pivot_low']
+        
+        # Add dynamic multi-timeframe features found in DF
+        mtf_features = [c for c in df.columns if c.endswith('_5m') or c.endswith('_15m')]
+        
+        # Deduplicate and combine
+        features = list(set(base_features + mtf_features))
+        
+        # Sort to ensure consistent order
+        features.sort()
+        
+        # Enforce 'returns' as the first feature (Target)
+        if 'returns' in features:
+            features.remove('returns')
+            features.insert(0, 'returns')
+        return features
 
     def prepare_data(self, df):
         df = df.copy()
@@ -131,13 +154,19 @@ class AIBrain:
         # Add Support/Resistance Distance
         if 'dist_support' not in df.columns: df['dist_support'] = 0
         if 'dist_resistance' not in df.columns: df['dist_resistance'] = 0
+        
+        # Ensure new advanced features exist (fill 0 if not calc by TA to avoid crash)
+        for col in ['stoch_rsi_k', 'atr', 'obv_slope']:
+            if col not in df.columns: df[col] = 0
 
         # Cleanup AFTER features
         df.replace([np.inf, -np.inf], 0, inplace=True)
         df.fillna(0, inplace=True)
 
-        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx', 'ema_trend', 'volatility_change', 'dist_support', 'dist_resistance', 'pattern_score']
-        # Ensure features exist
+        # Dynamic Feature Selection
+        features = self._get_feature_list(df)
+        
+        # Ensure base features exist
         for f in features:
             if f not in df.columns: df[f] = 0
 
@@ -164,14 +193,15 @@ class AIBrain:
         if not HAS_TENSORFLOW:
             X = X.reshape(X.shape[0], -1)
             
-        print(f"Training AI model ({'TensorFlow' if HAS_TENSORFLOW else 'RandomForest'})...")
+        print(f"Training AI model ({'TensorFlow' if HAS_TENSORFLOW else 'RandomForest High-Res'})...")
         
         if HAS_TENSORFLOW:
             if self.model is None: self.build_model((X.shape[1], X.shape[2]))
-            self.model.fit(X, y, epochs=5, batch_size=32, verbose=0)
+            self.model.fit(X, y, epochs=10, batch_size=32, verbose=0) # Increased epochs
             self.model.save(self.model_path)
         else:
             print(f"DEBUG: Input Shape {X.shape}. Starting Fit...")
+            # Automatically handles new shape by refitting
             self.model.fit(X, y)
             print("DEBUG: Fit Complete. Saving model...")
             try:
@@ -206,18 +236,31 @@ class AIBrain:
         if 'pattern_score' not in df.columns: df['pattern_score'] = 0
         if 'dist_support' not in df.columns: df['dist_support'] = 0
         if 'dist_resistance' not in df.columns: df['dist_resistance'] = 0
+        
+        # Ensure new advanced features exist
+        for col in ['stoch_rsi_k', 'atr', 'obv_slope', 'trend_score', 'pattern_triangle', 'is_pivot_high', 'is_pivot_low']:
+            if col not in df.columns: df[col] = 0
 
         # Cleanup AFTER features
         df.replace([np.inf, -np.inf], 0, inplace=True)
         df.fillna(0, inplace=True)
 
-        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx', 'ema_trend', 'volatility_change', 'dist_support', 'dist_resistance', 'pattern_score']
+        features = self._get_feature_list(df)
+        
         # Ensure features exist
         for f in features:
              if f not in df.columns: df[f] = 0
 
         data = df[features].values
-        scaled_data = self.scaler.transform(data)
+        
+        # Handle Scaling mismatch: If scaler expects X features but we have Y
+        # If we just retrained, scaler is updated.
+        # If we loaded old scaler, it might crash.
+        except ValueError as e:
+             print(f"⚠️ Scaler Mismatch in Batch Prediction: {e}")
+             self.scaler = MinMaxScaler(feature_range=(0, 1))
+             self.model = None
+             return np.array([])
         
         X = []
         if len(scaled_data) <= self.sequence_length:
@@ -228,7 +271,7 @@ class AIBrain:
             
         X = np.array(X)
         
-        print(f"   -> AI Predicting on {len(X)} samples...")
+        print(f"   -> AI Predicting on {len(X)} samples via Batch...")
         if HAS_TENSORFLOW:
             predictions_scaled = self.model.predict(X, batch_size=1024, verbose=0)
             dummy = np.zeros((len(predictions_scaled), len(features)))
@@ -287,12 +330,18 @@ class AIBrain:
         if 'pattern_score' not in df.columns: df['pattern_score'] = 0
         if 'dist_support' not in df.columns: df['dist_support'] = 0
         if 'dist_resistance' not in df.columns: df['dist_resistance'] = 0
+        
+        # Ensure new advanced features exist
+        for col in ['stoch_rsi_k', 'atr', 'obv_slope']:
+            if col not in df.columns: df[col] = 0
             
         # Cleanup
         df.replace([np.inf, -np.inf], 0, inplace=True)
         df.fillna(0, inplace=True)
 
-        features = ['returns', 'rsi', 'macd', 'bb_width', 'adx', 'ema_trend', 'volatility_change', 'dist_support', 'dist_resistance', 'pattern_score']
+        # Use dynamic feature list to match training
+        features = self._get_feature_list(df)
+        
         # Ensure features
         for f in features:
             if f not in df.columns: 
@@ -304,7 +353,15 @@ class AIBrain:
         data = input_df[features].values
         
         # Scale
-        scaled_data = self.scaler.transform(data)
+        try:
+            scaled_data = self.scaler.transform(data)
+        except ValueError as e:
+            print(f"⚠️ Feature Mismatch detected (New features added?): {e}")
+            print("🔄 Resetting Model and Scaler to force retraining...")
+            self.scaler = MinMaxScaler(feature_range=(0, 1))
+            self.model = None # Force retrain
+            # We can't predict now. Return current price.
+            return current_price
         
         # Reshape for model
         # Input shape: (1, sequence_length, features)
@@ -329,7 +386,7 @@ class AIBrain:
         
         return predicted_return
 
-    def validate_signal_with_deepseek(self, current_price, predicted_price, technical_summary, api_key=None):
+    def validate_signal_with_deepseek(self, current_price, predicted_price, technical_summary, market_context=None, api_key=None):
         """
         Uses DeepSeek LLM to validate the trade signal based on technical context.
         """
@@ -340,30 +397,51 @@ class AIBrain:
         signal_type = "COMPRA" if predicted_price > current_price else "VENDA"
         expected_return = (predicted_price - current_price) / current_price * 100
         
-        prompt = f"""
-        Você é um Gerente de Risco Sênior em Cripto. Analise esta operação de Bitcoin (1m Timeframe).
+        # Prepare Context String
+        ctx_str = ""
+        if market_context:
+            ctx_str = f"""
+        CONTEXTO DE MERCADO ATUAL:
+        - Regime: {market_context.get('regime', 'N/A')}
+        - Tendência (EMA200): {market_context.get('trend', 'N/A')}
+        - Dica Estratégia: {market_context.get('hint', 'N/A')}
+            """
         
-        Sinal: {signal_type}
+        prompt = f"""
+        Você é um Trader Especialista em Scalping (Alta Frequência). 
+        Analise esta oportunidade rápida de Bitcoin (1m Timeframe) considerando o contexto abaixo.
+        {ctx_str}
+        
+        Sinal IA: {signal_type}
         Preço Atual: {current_price}
         Alvo Previsto: {predicted_price} (Retorno Esp.: {expected_return:.4f}%)
         
         Contexto Técnico:
-        - RSI: {technical_summary.get('rsi', 50):.2f}
+        - RSI: {technical_summary.get('rsi', 50):.2f} (Neutro 40-60)
+        - StochRSI K: {technical_summary.get('stoch_rsi_k', 0.5):.2f} (0-1, >0.8 ob, <0.2 os)
+        - ATR (Volatilidade): {technical_summary.get('atr', 0):.4f} (Se alto, bom para scalping)
         - MACD: {technical_summary.get('macd', 0):.4f}
         - BB Width: {technical_summary.get('bb_width', 0):.4f}
-        - Pontuação de Padrão: {technical_summary.get('pattern_score', 0):.1f} (Positivo=Alta, Negativo=Baixa)
-        - Dist. Suporte: {technical_summary.get('dist_support', 0):.4f}
-        - Dist. Resistência: {technical_summary.get('dist_resistance', 0):.4f}
+        - Pontuação de Padrão: {technical_summary.get('pattern_score', 0):.1f}
         
-        Regras:
-        1. REJEITAR COMPRA se Preço muito perto da Resistência ou RSI > 75.
-        2. REJEITAR VENDA se Preço muito perto do Suporte ou RSI < 25.
-        3. APROVAR se Padrões combinam com a direção (ex: Padrão de Alta para COMPRA).
+        PRICE ACTION AVANÇADO:
+        - Tendência: {market_context.get('trend', 'N/A')} (Score: {technical_summary.get('trend_score', 0)})
+        - Padrão Triângulo/Squeeze? {'SIM' if technical_summary.get('pattern_triangle', 0) else 'NAO'}
+        - Pivot High Recente? {'SIM' if technical_summary.get('is_pivot_high', 0) else 'NAO'}
+        - Distância Fib 50%: {technical_summary.get('fib_500', 0):.2f}%
+        
+        Regras de Validação (SCALPING AGRESSIVO):
+        1. Respeite o REGIME de mercado:
+           - Se ALTA VOLATILIDADE: Aprove Trades mais agressivos se houver momentum.
+           - Se BAIXA VOLATILIDADE: Exija padrões claros ou squeezes.
+        2. Siga a TENDÊNCIA macro (EMA200) para aumentar winrate, mas permita contra-tendência CURTA (Reversão) se RSI estiver extremo (>80/<20).
+        3. Focar em capturar movimentos curtos (0.1% - 0.5%).
+        4. REJEITE se o contexto técnico contradizer fortemente o sinal (ex: Compra em Tendência de Baixa sem Oversold).
         
         Responda APENAS JSON:
         {{
             "approved": true/false,
-            "reason": "Explicação curta em Português"
+            "reason": "Explicação curta focada no contexto e scalping"
         }}
         """
         

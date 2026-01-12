@@ -22,6 +22,7 @@ def build_executable():
         '--onefile',       # Create a single executable
         '--windowed',      # No console window
         '--clean',
+        '--paths=%s' % os.getcwd(),
         
         # Hidden Imports (Crucial for pandas, sklearn, tensorflow, etc.)
         '--hidden-import=pandas',
@@ -39,10 +40,21 @@ def build_executable():
         '--hidden-import=schedule',
         '--hidden-import=plotly',
         '--hidden-import=streamlit',
+        '--hidden-import=custom_strategies', # If any
+        
+        # Explicit Local Modules (Fixes ModuleNotFoundError)
+        '--hidden-import=trader',
+        '--hidden-import=ai_brain',
+        '--hidden-import=technical_analysis',
+        '--hidden-import=logger',
+        '--hidden-import=data_manager',
+        '--hidden-import=config',
         
         # Data files
         '--add-data=dashboard.py;.', 
         '--add-data=crypto_data.db;.', 
+        '--add-data=bitcoin_ai_model.pkl;.', 
+        '--add-data=scaler.pkl;.', 
         '--add-data=app_icon.png;.', 
     ]
     

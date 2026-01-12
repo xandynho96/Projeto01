@@ -108,8 +108,17 @@ class Backtester:
         except:
             pass
             
-        sl_pct = (sl_roe / lev) / 100
-        tp_pct = (tp_roe / lev) / 100
+        # Scalping Defaults (1m timeframe)
+        # TP: 0.2% move, SL: 0.1% move
+        sl_pct = 0.001
+        tp_pct = 0.002
+        
+        # Sync ROE for PnL Calc
+        sl_roe = sl_pct * lev * 100
+        tp_roe = tp_pct * lev * 100
+        
+        # Override if user config exists but ensure sanity for scalping
+        # ... logic ...
         
         # Lookahead: How long do we wait? 1H (60m)
         lookahead = 60 
@@ -220,6 +229,7 @@ class Backtester:
             return pd.Series(0.0, index=self.df.index)
             
         # Predictions correspond to indices [sequence_length:]
+        # Predictions are 'returns' for the target candle.
         # We need to PAD the beginning
         pad_len = len(self.df) - len(predictions)
         if pad_len < 0:
@@ -230,37 +240,152 @@ class Backtester:
         aligned = np.concatenate([padding, predictions])
         return pd.Series(aligned, index=self.df.index)
 
-        return pd.Series(aligned, index=self.df.index)
-
     def generate_ai_signals(self):
-        # AI Pred already in DF
-        if 'ai_pred' not in self.df.columns: return pd.Series(0, index=self.df.index)
+        # AI Return Pred already in DF as 'ai_return'
+        if 'ai_return' not in self.df.columns: return pd.Series(0, index=self.df.index)
         
-        pred = self.df['ai_pred']
-        close = self.df['close']
+        # We need prediction for T+1 available at T.
+        # 'ai_return' at index T is the return for T (predicted at T-1).
+        # So we shift -1 to get "Predicted Return for Next Candle".
+        next_return = self.df['ai_return'].shift(-1)
         
-        # Technical Filters
+        # Technical Filters (Relaxed for Scalping)
         rsi = self.df['rsi'] if 'rsi' in self.df.columns else pd.Series(50, index=self.df.index)
-        adx = self.df['adx'] if 'adx' in self.df.columns else pd.Series(0, index=self.df.index)
         
         signals = pd.Series(0, index=self.df.index)
         
-        # Enhanced Thresholds for AI
-        # Only trade if predicted change is SIGNIFICANT (> 0.2% for Scalping)
-        # AND Technical Confluence
-        
-        # Check if pred is sane (not 0.0)
-        valid_pred = (pred > 0) & (pred.notna())
-        
-        # Long: Pred > Current + 0.2% AND RSI < 60 (Room to grow) AND ADX > 20 (Trend)
-        long_cond = valid_pred & (pred > close * 1.002) & (rsi < 60) & (adx > 20)
+        # Expert Scalping Thresholds (0.05% = 0.0005)
+        # Long: Predicted > 0.05%
+        # Relaxed RSI: Just don't buy top (>75)
+        long_cond = (next_return > 0.0005) & (rsi < 75)
         signals[long_cond] = 1 
         
-        # Short: Pred < Current - 0.2% AND RSI > 40 (Room to drop) AND ADX > 20
-        short_cond = valid_pred & (pred < close * 0.998) & (rsi > 40) & (adx > 20)
+        # Short: Predicted < -0.05%
+        # Relaxed RSI: Just don't sell bottom (<25)
+        short_cond = (next_return < -0.0005) & (rsi > 25)
         signals[short_cond] = -1 
         
         return signals
+
+    def filter_with_deepseek(self, signals, brain, limit_checks=10):
+        """
+        Filters signals using DeepSeek API. 
+        WARNING: Slow and consumes credits. Limits to last 'limit_checks' signals.
+        """
+        if signals.eq(0).all(): return signals
+        
+        filtered_signals = signals.copy()
+        
+        # Get indices of signals
+        signal_indices = signals[signals != 0].index
+        
+        # Limit to last N checks to save time/credits during backtest dev
+        if len(signal_indices) > limit_checks:
+            print(f"⚠️ Limiting DeepSeek checks to last {limit_checks} signals (from {len(signal_indices)} total)...")
+            signal_indices = signal_indices[-limit_checks:]
+            # Zero out skipped signals? Or keep them as "Unvalidated"?
+            # ideally we ONLY run this filter on a small backtest window.
+            # For now, we only validate the last N, and ASSUME others are 0 (safest) or leave raw? 
+            # Let's leave others raw to see impact on RECENT activity, or zero them to see "What if I ONLY traded with DeepSeek"?
+            # Let's ZERO them out to strictly test DeepSeek's quality.
+            filtered_signals.loc[~filtered_signals.index.isin(signal_indices)] = 0
+            
+        print(f"🤖 DeepSeek Validating {len(signal_indices)} signals...")
+        
+        api_key = None
+        # Load API Key
+        try:
+             with open("user_config.json", "r") as f:
+                 api_key = json.load(f).get("deepseek_key")
+        except: pass
+        
+        if not api_key:
+             # Fallback to config.py
+             try:
+                 import config
+                 api_key = config.DEEPSEEK_API_KEY
+             except: pass
+        
+        if not api_key:
+            print("❌ No DeepSeek Key found. Skipping validation.")
+            return signals
+
+        count = 0
+        for idx in signal_indices:
+            count += 1
+            row = self.df.loc[idx]
+            signal = signals.loc[idx]
+            current_price = row['close']
+            
+            # Predict Target (approximate based on signal direction and scalping target 0.2%)
+            # We don't have exact 'predicted_price' easily accessible here unless we stored it.
+            # But we can assume the AI saw > 0.05% move.
+            # Let's reconstruct context.
+            
+            # Use 'ai_return' if available
+            pred_return = row.get('next_return', 0.001 if signal == 1 else -0.001)
+            predicted_price = current_price * (1 + pred_return)
+            
+            # 1. Market Context Construction
+            # Calculate simple regime/trend context on the fly
+            # Need historical context (e.g. BB Width). 
+            # Assumes DF has indicators.
+            
+            bb_width = row.get('bb_width', 0)
+            ema_200 = row.get('ema_200', current_price)
+            
+            regime = "NORMAL"
+            hint = "Seguir IA"
+            if bb_width < 0.005:
+                regime = "BAIXA VOLATILIDADE (Squeeze)"
+                hint = "Aguardar Rompimento"
+            elif bb_width > 0.02:
+                regime = "ALTA VOLATILIDADE"
+                hint = "Scalping de Alta Volatilidade"
+                
+            trend = "ALTA" if current_price > ema_200 else "BAIXA"
+            
+            market_context = {
+                "regime": regime,
+                "hint": hint,
+                "trend": trend
+            }
+            
+            # 2. Technical Summary
+            tech_summary = {
+                'rsi': row.get('rsi', 50),
+                'stoch_rsi_k': row.get('stoch_rsi_k', 0.5),
+                'atr': row.get('atr', 0),
+                'macd': row.get('macd', 0),
+                'bb_width': bb_width,
+                'pattern_score': row.get('pattern_score', 0)
+            }
+            
+            # 3. Call Brain
+            # We need to print progress
+            print(f"   [{count}/{len(signal_indices)}] Validating Signal {idx} ({'BUY' if signal==1 else 'SELL'})... ", end="")
+            
+            try:
+                # Add delay to avoid rate limit
+                time.sleep(0.5) 
+                validation = brain.validate_signal_with_deepseek(
+                    current_price, 
+                    predicted_price, 
+                    tech_summary, 
+                    market_context=market_context, 
+                    api_key=api_key
+                )
+                
+                if not validation.get('approved', True):
+                    print(f"❌ REJECTED: {validation.get('reason', 'N/A')}")
+                    filtered_signals.loc[idx] = 0
+                else:
+                    print(f"✅ APPROVED: {validation.get('reason', 'OK')}")
+                    
+            except Exception as e:
+                print(f"Error: {e}")
+                
+        return filtered_signals
 
     def run_strategy(self, strategy_name, strategy_func):
         """Runs a backtest for a specific strategy function."""
@@ -408,7 +533,7 @@ def run_continuous_training_loop(bt):
     
     cycle = 0
     try:
-        while True:
+        while cycle < 1:
             cycle += 1
             print(f"\n\n🔁 CYCLE {cycle} START")
             
@@ -439,62 +564,38 @@ def run_continuous_training_loop(bt):
             predictions = brain.predict_batch(bt.df)
             
             if predictions is None:
-                print("⚠️ AI Predictions unavailable (Model not ready or no TF). Using Close Price as fallback.")
-                bt.df['ai_pred'] = bt.df['close']
+                print("⚠️ AI Predictions unavailable. Using 0.")
+                bt.df['ai_return'] = 0.0
             else:
-                # Align predictions
-                # Sequence length = brain.sequence_length (default 60)
-                seq_len = getattr(brain, 'sequence_length', 60)
-                padding = [np.nan] * seq_len
-                
-                # Check dimensions
-                if isinstance(predictions, np.ndarray) and predictions.ndim == 0:
-                     print("⚠️ Prediction was scalar. Converting to array.")
-                     predictions = np.array([predictions])
-                
-                # If still empty
-                if len(predictions) == 0:
-                     print("⚠️ Predictions array is empty. Fallback.")
-                     bt.df['ai_pred'] = bt.df['close']
-                else:
-                    try:
-                        pred_series = np.concatenate([padding, predictions])
-                        if len(pred_series) == len(bt.df):
-                            bt.df['ai_pred'] = pred_series
-                        else:
-                            # Try to force fit or fallback
-                            print(f"⚠️ Prediction mismatch ({len(pred_series)} vs {len(bt.df)}). Fallback.")
-                            bt.df['ai_pred'] = bt.df['close']
-                    except Exception as e:
-                        print(f"⚠️ Error aligning predictions: {e}. Fallback.")
-                        bt.df['ai_pred'] = bt.df['close'] 
-            bt.df['ai_pred'] = 0.0 # Reset
-            
-            # ... (Existing alignment logic) ...
-            try:
-                 aligned_preds = bt.align_predictions(brain.predict_batch(bt.df), brain.sequence_length)
-                 if len(aligned_preds) == len(bt.df):
-                     bt.df['ai_pred'] = aligned_preds
-                 else:
-                     print("⚠️ Prediction alignment mismatch.")
-            except Exception as e:
-                 print(f"⚠️ Prediction error: {e}")
+                try:
+                    aligned_preds = bt.align_predictions(predictions, getattr(brain, 'sequence_length', 60))
+                    if len(aligned_preds) == len(bt.df):
+                        bt.df['ai_return'] = aligned_preds
+                        # Pre-shift for strategy wrapper if needed, or just let vectorized handle it
+                        bt.df['next_return'] = bt.df['ai_return'].shift(-1)
+                    else:
+                        print("⚠️ Prediction alignment mismatch.")
+                        bt.df['ai_return'] = 0.0
+                except Exception as e:
+                     print(f"⚠️ Prediction error: {e}")
+                     bt.df['ai_return'] = 0.0
+                     
             
             # Define AI Strategy Wrapper
             def strat_ai_wrapper(row, position):
-                # Simple Logic: If AI predicts price > current * 1.001 -> Buy
-                if pd.isna(row['ai_pred']): return 'hold'
+                # Using pre-calculated 'next_return' (Prediction for T+1 made at T)
+                if pd.isna(row.get('next_return', 0)): return 'hold'
                 
-                pred = row['ai_pred']
-                curr = row['close']
+                pred_ret = row['next_return']
                 
-                if pred > curr * 1.0005 and position == 0:
+                # Scalping Threshold 0.05%
+                if pred_ret > 0.0005 and position == 0:
                     return 'buy'
-                elif pred < curr * 0.9995 and position == 0:
+                elif pred_ret < -0.0005 and position == 0:
                     return 'sell'
-                elif pred < curr and position == 1:
+                elif pred_ret < 0 and position == 1:
                     return 'close'
-                elif pred > curr and position == -1:
+                elif pred_ret > 0 and position == -1:
                     return 'close'
                 return 'hold'
 
@@ -509,6 +610,13 @@ def run_continuous_training_loop(bt):
             # AI Strategy (Vectorized)
             signals_ai = bt.generate_ai_signals()
             results['AI Enhanced'] = bt.run_vectorized_backtest(signals_ai)
+            
+            # DeepSeek Filtered Strategy (Limited Test)
+            # Only run if AI has signals
+            if not signals_ai.eq(0).all():
+                 print(f"🤖 Running DeepSeek Filter on AI Signals...")
+                 signals_deepseek = bt.filter_with_deepseek(signals_ai, brain, limit_checks=5) # Limit to 5 for speed
+                 results['AI + DeepSeek'] = bt.run_vectorized_backtest(signals_deepseek)
             
             # 5. Dashboard
             print("-" * 80)

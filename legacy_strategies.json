@@ -1,0 +1,58 @@
+[
+  {
+    "id": "bull_trend_sniper_smart_money_mtf_apex_refined_momentum_v1",
+    "name": "Bull Trend Sniper Smart Money MTF Apex Refined Momentum v1",
+    "target": "BULL_TREND",
+    "winRate": "100.0",
+    "rules": [
+      {
+        "conditions": [
+          { "indicator": "trend_5m", "operator": "==", "value": 1 }
+        ]
+      },
+      {
+        "conditions": [
+          { "indicator": "rsi", "operator": ">=", "value": 45 },
+          { "indicator": "rsi", "operator": "<=", "value": 55 }
+        ]
+      },
+      {
+        "conditions": [
+          { "indicator": "rsi_5m", "operator": ">=", "value": 50 }
+        ]
+      },
+      {
+        "conditions": [
+          { "indicator": "dist_bb_lower", "operator": ">", "value": 0 }
+        ]
+      },
+      {
+        "conditions": [
+          { "indicator": "pattern_bullish_engulfing", "operator": "==", "value": 1 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "bear_trend_sniper_v1",
+    "name": "Bear Trend Sniper V1",
+    "target": "BEAR_TREND",
+    "winRate": "72.4",
+    "rules": [
+        { "conditions": [{ "indicator": "trend_5m", "operator": "==", "value": -1 }] },
+        { "conditions": [{ "indicator": "rsi", "operator": ">", "value": 50 }, { "indicator": "rsi", "operator": "<", "value": 60 }] },
+        { "conditions": [{ "indicator": "dist_bb_upper", "operator": ">", "value": 0 }] },
+        { "conditions": [{ "indicator": "pattern_bearish_engulfing", "operator": "==", "value": 1 }] },
+        { "conditions": [{ "indicator": "rsi_5m", "operator": "<", "value": 60 }] }
+    ]
+  },
+  {
+    "id": "range_kill_v1",
+    "name": "Range Kill (Reversal)",
+    "target": "SIDEWAYS",
+    "winRate": "100.0",
+    "rules": [
+       { "conditions": [{ "indicator": "adx", "operator": "<", "value": 25 }, { "indicator": "rsi", "operator": "<", "value": 30 }, { "indicator": "dist_bb_lower", "operator": "<", "value": 0.001 }] }
+    ]
+  }
+]
