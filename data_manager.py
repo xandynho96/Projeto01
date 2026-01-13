@@ -5,6 +5,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import time
 import config
+import json
 
 Base = declarative_base()
 
@@ -44,6 +45,7 @@ class StrategyModel(Base):
     winrate = Column(Float)
     trades = Column(Integer)
     fitness = Column(Float)
+    status = Column(String, default='lab') # lab (validation), active (promoted), archived
 
 class DataManager:
     def __init__(self, db_url=config.DB_URL):
@@ -405,32 +407,36 @@ class DataManager:
             print(f"Error executing order: {e}")
             return {'error': str(e)}
 
-    def get_balance(self):
-        """Fetches total account balance (USD/USDT usually)"""
+    def get_balance(self, type='free'):
+        """
+        Fetches account balance (USD/USDT).
+        type: 'free' (Available for trade) or 'total' (Equity).
+        """
         if not self.exchange or not self.exchange.apiKey:
             return 0.0
         
         try:
             balance = self.exchange.fetch_balance()
-            # Kraken Futures usually has 'total' in 'info' or specific keys like 'PF_USD' 
-            # CCXT usually maps 'total' -> {'USDT': ..., 'BTC': ...}
-            # Let's try to get total approximate USD value or free margin
             
-            # Common structure: balance['total']['USD'] or balance['free']['USD']
+            # Select Free or Total
+            bal_data = balance.get(type, {}) if type in balance else balance.get('total', {})
+            
             # Prioritize currency with actual balance
-            total = balance.get('total', {})
-            usd_bal = total.get('USD', 0.0)
-            usdt_bal = total.get('USDT', 0.0)
+            usd_bal = bal_data.get('USD', 0.0)
+            usdt_bal = bal_data.get('USDT', 0.0)
+            
+            # Kraken Futures often uses 'PF_USD' or similar
+            pf_usd = bal_data.get('PF_USD', 0.0)
             
             if usd_bal > 0:
                 return usd_bal
             elif usdt_bal > 0:
                 return usdt_bal
+            elif pf_usd > 0:
+                return pf_usd
             else:
-                return usd_bal # Return 0.0 if both are empty
+                return 0.0
             
-            # Legacy fallback
-            return balance.get('info', {}).get('totalWalletBalance', 0.0)
         except Exception as e:
             print(f"Error fetching balance: {e}")
             return 0.0
@@ -526,7 +532,7 @@ class DataManager:
             session.close()
 
 
-    def save_strategy(self, genome, origin='evolution', regime='ANY'):
+    def save_strategy(self, genome, origin='evolution', regime='ANY', status='lab'):
         """Saves a strategy genome to the database."""
         session = self.Session()
         try:
@@ -534,18 +540,36 @@ class DataManager:
             # For massive evolution, maybe only save if fitness > X?
             # User wants to catalog created strategies.
             
+            # Handle Genome Object vs Dictionary
+            if isinstance(genome, dict):
+                genes_str = json.dumps(genome.get('params', genome))
+                win = genome.get('winrate', 0)
+                trd = genome.get('trades', 0)
+                fit = genome.get('fitness', 0)
+            else:
+                # Assume Object (Genome class)
+                if hasattr(genome, 'params'):
+                    genes_str = json.dumps(genome.params)
+                else:
+                    genes_str = str(genome)
+                win = genome.winrate
+                trd = genome.trades
+                fit = genome.fitness
+
             strat = StrategyModel(
                 origin=origin,
                 regime=regime,
-                genes=str(genome),
-                winrate=genome.winrate,
-                trades=genome.trades,
-                fitness=genome.fitness
+                genes=genes_str,
+                winrate=win,
+                trades=trd,
+                fitness=fit,
+                status=status
             )
             session.add(strat)
             session.commit()
-            # Assign ID back to genome if needed
-            if hasattr(genome, 'id'):
+            
+            # Assign ID back if object
+            if not isinstance(genome, dict) and hasattr(genome, 'id'):
                 genome.id = strat.id
             return strat.id
         except Exception as e:
@@ -574,6 +598,99 @@ class DataManager:
             return []
         finally:
             session.close()
+
+    def get_best_active_strategy(self):
+        """Fetches the single best strategy marked as 'active'."""
+        session = self.Session()
+        try:
+            strat = session.query(StrategyModel).filter_by(status='active').order_by(StrategyModel.fitness.desc()).first()
+            if strat:
+                 return {
+                    'id': strat.id,
+                    'regime': strat.regime,
+                    'winrate': strat.winrate,
+                    'trades': strat.trades,
+                    'genes': strat.genes,
+                    'origin': strat.origin
+                }
+            return None
+        except Exception as e:
+            print(f"Error fetching best active strategy: {e}")
+            return None
+        finally:
+            session.close()
+
+    def fetch_binance_history(self, symbol=config.SYMBOL, timeframe='1m', months=6):
+        """
+        Fetches deep historical data from Binance (BTC/USDT) which usually has much longer 1m retention.
+        Maps it to the requested symbol (e.g. BTC/USD) and saves to DB.
+        """
+        print(f"🌍 Conectando à Binance para baixar histórico profundo de {months} meses...")
+        try:
+            binance = ccxt.binance()
+            # Map symbol: Internal 'BTC/USD' -> Binance 'BTC/USDT'
+            # (Assuming high correlation, adequate for pattern recognition training)
+            remote_symbol = 'BTC/USDT'
+            
+            end_date = datetime.now()
+            start_date = end_date - pd.Timedelta(days=30 * months)
+            since_ts = int(start_date.timestamp() * 1000)
+            
+            all_candles = []
+            
+            # Binance limits: 1000 candles per call
+            limit = 1000
+            current_since = since_ts
+            
+            while True:
+                current_date_str = pd.to_datetime(current_since, unit='ms').strftime('%Y-%m-%d %H:%M')
+                print(f"   -> Baixando lote Binance a partir de {current_date_str}...")
+                
+                ohlcv = binance.fetch_ohlcv(remote_symbol, timeframe, limit=limit, since=current_since)
+                if not ohlcv:
+                    print("   -> Lote vazio. Fim do histórico.")
+                    break
+                
+                all_candles.extend(ohlcv)
+                
+                # Check timestamps
+                last_candle_ts = ohlcv[-1][0]
+                
+                # Stop if we reached close to now
+                if last_candle_ts >= int(end_date.timestamp() * 1000) - 60000:
+                    break
+                    
+                # Setup next call
+                current_since = last_candle_ts + 60000 # +1 min
+                
+                # Safety break to avoid infinite loop
+                if len(ohlcv) < limit: 
+                    # If we got less than limit, we likely hit head
+                    break
+                    
+                time.sleep(0.1) # Be nice to public API
+                
+            print(f"✅ Download Binance Concluído: {len(all_candles)} velas.")
+            
+            if not all_candles:
+                return
+
+            # Convert to DataFrame
+            df = pd.DataFrame(all_candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            
+            # Save to DB under the LOCAL symbol (BTC/USD)
+            self.save_data(df, symbol=symbol, timeframe=timeframe)
+            
+        except Exception as e:
+            print(f"❌ Erro ao baixar da Binance: {e}")
+
+    def fetch_deep_history(self, symbol=config.SYMBOL, timeframe='1m', months=6):
+        """
+        Wrapper to decide best source for deep history.
+        """
+        # Strategy: Try Binance first for deep 1m data as it is more reliable for 6+ months history.
+        self.fetch_binance_history(symbol, timeframe, months)
 
 if __name__ == "__main__":
     # Test the module

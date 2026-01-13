@@ -25,6 +25,7 @@ import pandas as pd # Force PyInstaller to bundle
 from trader import BitcoinTrader # Force PyInstaller to bundle
 import config
 import script_utils # Make sure this file exists or is handled
+import evolution # Import the evolution module
 
 # --- Redirect Stdout/Stderr to Queue ---
 class QueueWriter:
@@ -74,8 +75,8 @@ class BitcoinAIApp:
         self.deepseek_key_var = tk.StringVar()
         self.leverage_var = tk.StringVar(value=str(config.LEVERAGE))
         self.amount_var = tk.StringVar(value="20.0")
-        self.sl_var = tk.StringVar(value="2.0")
-        self.tp_var = tk.StringVar(value="4.0")
+        self.sl_var = tk.StringVar(value="0.18")
+        self.tp_var = tk.StringVar(value="0.24")
         self.demo_var = tk.BooleanVar(value=False)
         
         # UI Status Variables
@@ -243,6 +244,9 @@ class BitcoinAIApp:
         # This button replaces 'Open Dashboard'
         self.btn_backtest = ttk.Button(control_pane, text="Executar Backtest", command=self.run_backtest_handler)
         self.btn_backtest.pack(fill="x", pady=5)
+        
+        self.btn_evolution = ttk.Button(control_pane, text="🧬 Evoluir Estratégias (IA)", command=self.run_evolution_handler)
+        self.btn_evolution.pack(fill="x", pady=5)
         
         self.btn_exit = ttk.Button(control_pane, text="Sair", command=self.on_closing)
         self.btn_exit.pack(fill="x", pady=15, side="bottom")
@@ -537,6 +541,27 @@ class BitcoinAIApp:
             
         except Exception as e:
             self.log(f"Falha ao iniciar backtest: {e}")
+
+    def run_evolution_handler(self):
+        """Runs the evolution worker in a separate thread."""
+        self.log("Iniciando Laboratório de Estratégias (IA + Genética) em Background...")
+        try:
+            # We run the worker directly. Since sys.stdout is redirected, prints should show in GUI.
+            thread = threading.Thread(target=self._run_evolution_safe)
+            thread.daemon = True
+            thread.start()
+        except Exception as e:
+            self.log(f"Falha ao iniciar evolução: {e}")
+
+    def _run_evolution_safe(self):
+        try:
+            # Check if data loads first, might block
+            evolution.evolution_worker() # This runs an infinite loop
+        except Exception as e:
+            self.log(f"ERRO CRÍTICO no Worker de Evolução: {e}")
+            import traceback
+            self.log(traceback.format_exc())
+
 
     def _monitor_backtest(self):
         # Force UTF-8 encoding for the subprocess to handle emojis

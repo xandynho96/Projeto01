@@ -1,0 +1,11 @@
+ Testing fetch_ohlcv 5m...
+🔌 Database Connection: sqlite:///crypto_data.db
+🔌 Connecting to Kraken [Spot Margin] (Demo: False)...
+Connected to Kraken Spot.
+Target Date: 2025-12-13 20:57:30.368238
+TS (ms): 1765659450368
+
+--- Test 6: Since MS, 5m Timeframe ---
+Count: 721
+First Candle: 2026-01-10 11:55:00
+Last Candle:  2026-01-12 23:55:00

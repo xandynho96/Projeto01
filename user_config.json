@@ -4,7 +4,7 @@
     "demo_mode": true,
     "amount": 50.0,
     "leverage": 10.0,
-    "sl_pct": 30.0,
-    "tp_pct": 70.0,
+    "sl_pct": 0.18,
+    "tp_pct": 0.24,
     "trading_mode": "Spot Margin (10x)"
 }

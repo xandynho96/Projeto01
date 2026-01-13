@@ -1,12 +1,13 @@
 import time
 import schedule
 import pandas as pd
+import threading
+import json
 from datetime import datetime
 from data_manager import DataManager
 from technical_analysis import TechnicalAnalysis
-from data_manager import DataManager
-from technical_analysis import TechnicalAnalysis
 from ai_brain import AIBrain
+from evolution import evolution_worker
 import config
 from logger import setup_logger
 
@@ -43,15 +44,23 @@ class BitcoinTrader:
         if leverage > 1:
             self.dm.set_leverage(leverage)
 
-    def train_on_historical_memory(self, limit=50000):
+    def train_on_historical_memory(self, limit=260000):
         """Trains the AI on a large dataset from the local DB, recreating HTF context."""
-        self.logger.info(f"🧠 MEMÓRIA: Carregando histórico profundo ({limit} velas) do Banco de Dados...")
+        # 260,000 minutes ~= 6 months
+        self.logger.info(f"🧠 MEMÓRIA: Carregando histórico profundo ({limit} velas) do Banco de Dados. Isso pode levar alguns segundos...")
         
         # 1. Load Raw 1m Data from DB
         df_1m = self.dm.get_data_from_db(limit=limit)
         
+        # Auto-Backfill if insufficient data
+        if len(df_1m) < (limit * 0.5): # If we have less than 50% of desired history
+             self.logger.warning(f"⚠️ Histórico local insuficiente ({len(df_1m)} vs Alvo {limit}). Iniciando Backfill de 6 meses...")
+             self.dm.fetch_deep_history(months=6)
+             # Reload after backfill
+             df_1m = self.dm.get_data_from_db(limit=limit)
+        
         if len(df_1m) < 1000:
-            self.logger.warning("Histórico insuficiente no DB para treino profundo.")
+            self.logger.warning("Histórico insuficiente no DB para treino profundo, mesmo após tentativa de backfill.")
             return
 
         # 2. Resample for HTF (5m, 15m)
@@ -112,17 +121,34 @@ class BitcoinTrader:
     def _initial_training(self):
         self.logger.info("Realizando preparação inicial...")
         
-        # 1. Try Deep Memory Training first (if DB has data)
+        # Check DB size/Deep Memory availability
         try:
-            self.train_on_historical_memory(limit=50000)
+             # Heuristic: Check recent data count. If low, assume new setup and trigger backfill.
+             # Fetch last 100 rows
+             recent_data = self.dm.get_data_from_db(limit=100)
+             
+             if len(recent_data) < 50:
+                 self.logger.info("⚠️ Banco de dados parece vazio/incompleto. Iniciando Backfill de 6 meses...")
+                 self.dm.fetch_deep_history(months=6)
+             else:
+                 self.logger.info("Banco de dados existente detectado. Pulando backfill massivo (use script de reset se necessário).")
+                 
+             # INITIAL OPTIMIZATION: Check if model is already trained/loaded
+             if self.brain.is_model_trained():
+                 self.logger.info("🧠 CÉREBRO: Modelo validado e carregado do disco. Pulando treinamento inicial pesado.")
+                 # Still update "last_training_time" so it triggers update in 15 mins
+                 self.last_training_time = datetime.now()
+             else:
+                 self.logger.info("🧠 CÉREBRO: Modelo novo ou não treinado. Iniciando carga de memória profunda...")
+                 self.train_on_historical_memory(limit=260000)
+             
         except Exception as e:
-            self.logger.error(f"Erro no treino de memória profunda: {e}")
+            self.logger.error(f"Erro na preparação inicial: {e}")
 
         # 2. Fetch fresh small batch just to ensure connectivity and latest data
         df = self.dm.fetch_multi_timeframe_data(limit=100)
         if not df.empty:
              self.dm.save_data(df)
-
     def sync_open_trades(self):
         """Checks if open trades in DB are closed on Exchange."""
         open_trades = self.dm.get_open_trades()
@@ -181,6 +207,24 @@ class BitcoinTrader:
         df = ta.add_all_indicators()
         df.dropna(inplace=True) 
 
+        # 0.1 Check for Evolved Strategies
+        try:
+             best_strat = self.dm.get_best_active_strategy()
+             if best_strat:
+                 # Parse params
+                 params = json.loads(best_strat['genes'])
+                 
+                 # Update internal settings if changed
+                 # We simply update self.user_settings override
+                 self.user_settings['sl_pct'] = params.get('sl_pct', 2.0)
+                 self.user_settings['tp_pct'] = params.get('tp_pct', 4.0)
+                 # self.user_settings['rsi_buy'] = params.get('rsi_buy', 30) # Used in fallback logic
+                 
+                 self.logger.info(f"🧬 Estratégia Evoluída Aplicada ({best_strat['origin']}): WR {best_strat['winrate']:.1f}%")
+                 self.logger.info(f"   📐 SL: {self.user_settings['sl_pct']}% | TP: {self.user_settings['tp_pct']}%")
+        except Exception as e:
+            self.logger.error(f"Erro ao carregar estratégia evoluída: {e}")
+
         # --- MARKET REGIME ANALYSIS (Thinking) ---
         last_row = df.iloc[-1]
         volatility = last_row.get('bb_width', 0)
@@ -230,17 +274,41 @@ class BitcoinTrader:
             # Fallback Logic: Use current price as base and let Signals decide
             predicted_price = current_price 
             
-            # Simple TA Strategy Fallback
-            rsi = df['rsi'].iloc[-1]
-            if rsi < 30:
-                signal = "buy"
-                self.logger.info("Estratégia Fallback: RSI Sobrevendido (<30) -> SINAL COMPRA")
-            elif rsi > 70:
-                signal = "sell"
-                self.logger.info("Estratégia Fallback: RSI Sobrecomprado (>70) -> SINAL VENDA")
-            else:
-                 signal = "HOLD"
-                 self.logger.info(f"Estratégia Fallback: RSI Neutro ({rsi:.2f}) -> HOLD")
+            # --- ADVANCED SCALPING STRATEGY (Confluence) ---
+            # Requires: RSI + StochRSI + BB to agree.
+            
+            row = df.iloc[-1]
+            rsi = row.get('rsi', 50)
+            stoch_k = row.get('stoch_k', 50)
+            stoch_rsi_k = row.get('stoch_rsi_k', 0.5)
+            close_price = row['close']
+            bb_low = row['bb_low']
+            bb_high = row['bb_high']
+            
+            # Thresholds
+            RSI_BUY = 35
+            RSI_SELL = 65
+            STOCH_BUY = 20
+            STOCH_SELL = 80
+            
+            signal = "HOLD"
+            strategy_name = "HOLD"
+
+            # BUY CONDITION: RSI Low AND Stoch Low AND Price near/below BB Low
+            if rsi < RSI_BUY and stoch_k < STOCH_BUY:
+                if close_price <= bb_low * 1.002: # Within 0.2% of BB Low
+                    signal = "buy"
+                    strategy_name = "Scalper Confluence (Oversold)"
+            
+            # SELL CONDITION: RSI High AND Stoch High AND Price near/above BB High
+            elif rsi > RSI_SELL and stoch_k > STOCH_SELL:
+                if close_price >= bb_high * 0.998: # Within 0.2% of BB High
+                    signal = "sell"
+                    strategy_name = "Scalper Confluence (Overbought)"
+            
+            self.logger.info(f"Estratégia Técnica ({strategy_name}): RSI={rsi:.1f}, Stoch={stoch_k:.1f}")
+            
+            if signal == "HOLD":
                  return # Exit if HOLD
         else:
             # Normal AI Logic
@@ -251,16 +319,50 @@ class BitcoinTrader:
             change_percent = predicted_return * 100
             self.logger.info(f"Mudança Esperada: {change_percent:.4f}%")
             
-            # Spot Fees are ~0.26% Taker (Round trip ~0.52%).
-            # Reverted to 0.45% safety threshold as per user request to rely on AI learning instead of forcing trades.
-            # UPDATE: Adjusted to 0.05% for Expert Scalping Mode (High Frequency)
-            threshold = 0.05 
+            # Spot Fees are ~0.26% Taker.
+            # LOWERING threshold to 0.02% to be more aggressive availability for scalping
+            threshold = 0.02 
             
             signal = "HOLD"
             if change_percent > threshold:
                 signal = "buy"
             elif change_percent < -threshold:
                 signal = "sell"
+            
+            # --- HYBRID FALLBACK: If AI says HOLD, check Technicals ---
+            if signal == "HOLD":
+                 # Use current price as base
+                 # --- ADVANCED SCALPING STRATEGY (Confluence) ---
+                row = df.iloc[-1]
+                close_price = row['close'] # Define close_price
+                rsi = row.get('rsi', 50)
+                stoch_k = row.get('stoch_k', 50)
+                bb_low = row.get('bb_low', 0)
+                bb_high = row.get('bb_high', 0)
+                
+                # Thresholds (Aggressive Scalping)
+                RSI_BUY = 40  # Slightly relaxed
+                RSI_SELL = 60
+                STOCH_BUY = 25
+                STOCH_SELL = 75
+                
+                strategy_name = "HOLD"
+
+                # BUY CONDITION: RSI Low AND Stoch Low
+                if rsi < RSI_BUY and stoch_k < STOCH_BUY:
+                     # Check BB proximity (optional, relaxed)
+                     if close_price <= bb_low * 1.005: 
+                        signal = "buy"
+                        strategy_name = "Hybrid Scalper (Oversold)"
+                
+                # SELL CONDITION: RSI High AND Stoch High
+                elif rsi > RSI_SELL and stoch_k > STOCH_SELL:
+                    if close_price >= bb_high * 0.995:
+                        signal = "sell"
+                        strategy_name = "Hybrid Scalper (Overbought)"
+                
+                if signal != "HOLD":
+                     self.logger.info(f"🔄 HÍBRIDO: AI 'Hold' anulado por {strategy_name}. (RSI={rsi:.1f}, Stoch={stoch_k:.1f})")
             
         self.logger.info(f"DECISÃO: {signal.upper()}")
         
@@ -298,6 +400,15 @@ class BitcoinTrader:
             # Use User Settings
             # 'amount' is treated as MARGIN (Collateral) now, per user expectation.
             margin_usd = float(self.user_settings.get('amount', 20.0))
+            
+            # --- SAFETY CHECK: BALANCE ---
+            free_balance = self.dm.get_balance(type='free')
+            self.logger.info(f"Saldo Disponível: ${free_balance:.2f} | Margem Requerida: ${margin_usd:.2f}")
+            
+            if free_balance < margin_usd:
+                self.logger.warning(f"⛔ Saldo insuficiente para abrir trade. (Livre: ${free_balance:.2f} < Req: ${margin_usd:.2f})")
+                return
+
             leverage = int(float(self.user_settings.get('leverage', 1.0)))
             
             # Effective Position Size = Margin * Leverage
@@ -314,26 +425,53 @@ class BitcoinTrader:
                 
             self.logger.info(f"Alvo: Margin ${margin_usd} x {leverage} = ${total_position_usd:.2f} (~{amount_btc:.5f} BTC)")
 
-            sl_pct = float(self.user_settings.get('sl_pct', 2.0))
-            tp_pct = float(self.user_settings.get('tp_pct', 4.0))
+            # --- DYNAMIC ATR EXITS ---
+            atr = df['atr'].iloc[-1]
             
-            # Calculate SL/TP Prices
-            # BUY: SL below, TP above
-            # SELL: SL above, TP below
+            # Multipliers for Scalping
+            atr_sl_mult = 1.5
+            atr_tp_mult = 2.5
             
-            # Calculate SL/TP Prices (BEFORE Entry to attach SL)
-            # BUY: SL below, TP above
-            # SELL: SL above, TP below
+            if atr > 0:
+                # Dynamic Logic
+                self.logger.info(f"Usando ATR ({atr:.2f}) para Stops Dinâmicos.")
+                if signal == "buy":
+                    sl_price = current_price - (atr * atr_sl_mult)
+                    tp_price = current_price + (atr * atr_tp_mult)
+                else: # sell
+                    sl_price = current_price + (atr * atr_sl_mult)
+                    tp_price = current_price - (atr * atr_tp_mult)
+            else:
+                # Fallback to percentages
+                self.logger.warning("ATR inválido/zero. Usando Configuração Manual %.")
+                sl_pct = float(self.user_settings.get('sl_pct', 2.0))
+                tp_pct = float(self.user_settings.get('tp_pct', 4.0))
+                
+                if signal == "buy":
+                    sl_price = current_price * (1 - sl_pct/100)
+                    tp_price = current_price * (1 + tp_pct/100)
+                else: # sell
+                    sl_price = current_price * (1 + sl_pct/100)
+                    tp_price = current_price * (1 - tp_pct/100)
+            
+            # Rounding
+            sl_price = round(sl_price, 1)
+            tp_price = round(tp_price, 1)
+            
+            # --- PROFIT GUARD: Ensure TP covers Fees (~0.52% + Buffer) ---
+            MIN_PROFIT_PCT = 0.006 # 0.6%
             
             if signal == "buy":
-                sl_price = current_price * (1 - sl_pct/100)
-                tp_price = current_price * (1 + tp_pct/100)
-            else: # sell
-                sl_price = current_price * (1 + sl_pct/100)
-                tp_price = current_price * (1 - tp_pct/100)
-            
-            # CRITICAL: Round to 1 decimal for Kraken Spot BTC/USD
-            sl_price = round(sl_price, 1)
+                min_tp = current_price * (1 + MIN_PROFIT_PCT)
+                if tp_price < min_tp:
+                    self.logger.info(f"🛡️ TP Ajustado para cobrir taxas: {tp_price:.2f} -> {min_tp:.2f}")
+                    tp_price = min_tp
+            elif signal == "sell":
+                min_tp = current_price * (1 - MIN_PROFIT_PCT)
+                if tp_price > min_tp:
+                    self.logger.info(f"🛡️ TP Ajustado para cobrir taxas: {tp_price:.2f} -> {min_tp:.2f}")
+                    tp_price = min_tp
+                    
             tp_price = round(tp_price, 1)
 
             # Execution Params
@@ -379,6 +517,14 @@ class BitcoinTrader:
     def run(self):
         self.logger.info("Bot rodando. Pressione Ctrl+C para parar.")
         
+        # --- Start Evolution Lab in Background Thread ---
+        try:
+            self.logger.info("🧪 Iniciando Laboratório de Estratégias (Background)...")
+            evo_thread = threading.Thread(target=evolution_worker, daemon=True)
+            evo_thread.start()
+        except Exception as e:
+            self.logger.error(f"Falha ao iniciar Laboratório de Evolução: {e}")
+
         # Run once immediately
         self.job()
         
@@ -387,6 +533,11 @@ class BitcoinTrader:
         
         while True:
             schedule.run_pending()
+            
+            # Periodically check for evolved strategies (every loop approx 1s)
+            # But we don't want to hammer DB. Let's do it inside job() or here with timer.
+            # actually better inside job() so it's aligned with trade decisions.
+            
             time.sleep(1)
 
 if __name__ == "__main__":

@@ -49,12 +49,13 @@ def build_executable():
         '--hidden-import=logger',
         '--hidden-import=data_manager',
         '--hidden-import=config',
+        '--hidden-import=evolution',
         
         # Data files
         '--add-data=dashboard.py;.', 
-        '--add-data=crypto_data.db;.', 
-        '--add-data=bitcoin_ai_model.pkl;.', 
-        '--add-data=scaler.pkl;.', 
+        # '--add-data=crypto_data.db;.',  <-- REMOVED: Do not bundle DB inside Exe. Use external file.
+        # '--add-data=bitcoin_ai_model.pkl;.', <-- REMOVED: Model should be external for persistence
+        # '--add-data=scaler.pkl;.',           <-- REMOVED: Scaler should be external
         '--add-data=app_icon.png;.',
 
         # Force Include Source Files (Fixes ModuleNotFoundError)
@@ -64,16 +65,36 @@ def build_executable():
         '--add-data=data_manager.py;.',
         '--add-data=config.py;.',
         '--add-data=logger.py;.',
+        '--add-data=evolution.py;.',
     ]
     
     # Run PyInstaller
     PyInstaller.__main__.run(args)
     
     print("Build Complete.")
-    print(f"Executable is located in: {os.path.abspath('dist')}")
+    dist_dir = os.path.abspath('dist')
+    print(f"Executable is located in: {dist_dir}")
     
-    # Instructions for the user
-    print("\nIMPORTANT: Copy .env and crypto_data.db to the dist folder before running if they are not included/bundled correctly for your specific use case (e.g. if you want them editable outside the exe).")
+    # Post-Build: Copy external resources to dist folder
+    print("Copying external resources (DB, Models, Config) to dist/...")
+    
+    files_to_copy = [
+        'crypto_data.db',
+        '.env', 
+        'user_config.json',
+        'bitcoin_ai_model.pkl',
+        'scaler.pkl'
+    ]
+    
+    for f in files_to_copy:
+        if os.path.exists(f):
+            try:
+                shutil.copy(f, dist_dir)
+                print(f"   [+] Copied {f}")
+            except Exception as e:
+                print(f"   [!] Failed to copy {f}: {e}")
+        else:
+             print(f"   [-] Skipped {f} (Not found)")
 
 if __name__ == "__main__":
     build_executable()
