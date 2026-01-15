@@ -107,8 +107,12 @@ class DataManager:
             self.exchange = None
             return False
         
-    def fetch_historical_data(self, symbol=config.SYMBOL, timeframe=config.TIMEFRAME, limit=config.LIMIT, since=None):
+    def fetch_historical_data(self, symbol=None, timeframe=None, limit=None, since=None):
         """Fetches historical OHLCV data from Kraken."""
+        symbol = symbol or config.SYMBOL
+        timeframe = timeframe or config.TIMEFRAME
+        limit = limit or config.LIMIT
+        
         print(f"Fetching {limit if limit else 'all'} candles for {symbol} ({timeframe}) since {since}...")
         try:
             if not self.exchange:
@@ -127,11 +131,14 @@ class DataManager:
                 print("DEBUG: Available Symbols:", [m for m in self.exchange.markets.keys() if 'BTC' in m or 'XBT' in m])
             return pd.DataFrame() # Empty DF
 
-    def fetch_multi_timeframe_data(self, symbol=config.SYMBOL, limit=config.LIMIT):
+    def fetch_multi_timeframe_data(self, symbol=None, limit=None):
         """
         Fetches 1m data and enriches it with 5m and 15m indicators.
         Returns a single DataFrame with 1m granularity but higher timeframe context.
         """
+        symbol = symbol or config.SYMBOL
+        limit = limit or config.LIMIT
+        
         # 1. Fetch Data
         df_1m = self.fetch_historical_data(symbol, '1m', limit)
         if df_1m.empty: return df_1m
@@ -184,9 +191,11 @@ class DataManager:
         print(f"✅ Multi-Timeframe Merge Complete. Shape: {df_1m.shape}")
         return df_1m
 
-    def fetch_full_history(self, start_year=2020, symbol=config.SYMBOL, timeframe=config.TIMEFRAME):
+    def fetch_full_history(self, start_year=2020, symbol=None, timeframe=None):
         """Fetches full history using yfinance for bulk data (bypassing Kraken limits)."""
         import yfinance as yf
+        symbol = symbol or config.SYMBOL
+        timeframe = timeframe or config.TIMEFRAME
         
         # Map symbol for YF (BTC/USD -> BTC-USD)
         yf_symbol = symbol.replace('/', '-')
@@ -407,6 +416,21 @@ class DataManager:
             print(f"Error executing order: {e}")
             return {'error': str(e)}
 
+    def get_open_positions(self):
+        """Fetches open positions from the exchange (Futures only)."""
+        if not self.exchange: return []
+        try:
+            # Only Futures has 'positions'. Spot has 'open orders' but not 'positions' in the same sense.
+            if hasattr(self.exchange, 'fetch_positions'):
+                positions = self.exchange.fetch_positions()
+                # Filter for active positions
+                active = [p for p in positions if float(p['contracts']) > 0]
+                return active
+            return []
+        except Exception as e:
+            print(f"Error fetching positions: {e}")
+            return []
+
     def get_balance(self, type='free'):
         """
         Fetches account balance (USD/USDT).
@@ -422,20 +446,20 @@ class DataManager:
             bal_data = balance.get(type, {}) if type in balance else balance.get('total', {})
             
             # Prioritize currency with actual balance
+            # Kraken Spot often uses ZUSD for USD
             usd_bal = bal_data.get('USD', 0.0)
+            zusd_bal = bal_data.get('ZUSD', 0.0)
             usdt_bal = bal_data.get('USDT', 0.0)
             
             # Kraken Futures often uses 'PF_USD' or similar
             pf_usd = bal_data.get('PF_USD', 0.0)
             
-            if usd_bal > 0:
-                return usd_bal
-            elif usdt_bal > 0:
-                return usdt_bal
-            elif pf_usd > 0:
-                return pf_usd
-            else:
-                return 0.0
+            # Sum all Stablecoins to get "Total USD Buying Power" (approx for Margin)
+            # If trading Spot, this might be misleading if pairs don't match, 
+            # but for Spot Margin, all these count as collateral.
+            final_bal = usd_bal + zusd_bal + usdt_bal + pf_usd
+                
+            return final_bal
             
         except Exception as e:
             print(f"Error fetching balance: {e}")

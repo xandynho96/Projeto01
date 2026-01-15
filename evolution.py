@@ -18,8 +18,8 @@ CROSSOVER_RATE = 0.7
 # --- PARAMETER RANGES ---
 # --- PARAMETER RANGES (SCALPING FOCUSED) ---
 PARAM_RANGES = {
-    'sl_pct': (0.1, 1.5),      # Tight stops (Max 1.5% price move)
-    'tp_pct': (0.2, 3.0),      # Scalp targets (Max 3.0% price move)
+    'sl_pct': (0.5, 5.0),      # High ROE stops (Supports 2% default)
+    'tp_pct': (1.0, 10.0),     # High ROE targets (Supports 4.5% default)
     'rsi_buy': (15, 45),       
     'rsi_sell': (55, 85),      
     # 'rsi_period': (10, 20),

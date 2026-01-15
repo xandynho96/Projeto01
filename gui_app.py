@@ -31,12 +31,26 @@ import evolution # Import the evolution module
 class QueueWriter:
     def __init__(self, q):
         self.q = q
+        self.buffer = ""
 
     def write(self, message):
-        self.q.put(message)
+        # Accumulate in buffer
+        self.buffer += message
+        # If newline, split and send lines
+        if '\n' in self.buffer:
+            lines = self.buffer.split('\n')
+            # The last element might be an incomplete line if message didn't end with \n
+            # actually usually print ends with \n.
+            # but let's be safe.
+            for line in lines[:-1]:
+                self.q.put(line)
+            
+            self.buffer = lines[-1]
 
     def flush(self):
-        pass
+        if self.buffer:
+            self.q.put(self.buffer)
+            self.buffer = ""
 
 # --- Main App ---
 class BitcoinAIApp:
@@ -69,14 +83,14 @@ class BitcoinAIApp:
     def initialize_variables(self):
         # Settings Variables
 
-        self.mode_var = tk.StringVar(value="Spot Margin (10x)")
+        self.mode_var = tk.StringVar(value="Futures (50x)") # Default to Futures
         self.api_key_var = tk.StringVar()
         self.secret_var = tk.StringVar()
         self.deepseek_key_var = tk.StringVar()
-        self.leverage_var = tk.StringVar(value=str(config.LEVERAGE))
-        self.amount_var = tk.StringVar(value="20.0")
-        self.sl_var = tk.StringVar(value="0.18")
-        self.tp_var = tk.StringVar(value="0.24")
+        self.leverage_var = tk.StringVar(value="50.0") # Futures leverage default
+        self.amount_var = tk.StringVar(value="5")
+        self.sl_var = tk.StringVar(value="20") # 20% ROE
+        self.tp_var = tk.StringVar(value="40") # 40% ROE
         self.demo_var = tk.BooleanVar(value=False)
         
         # UI Status Variables
@@ -168,6 +182,20 @@ class BitcoinAIApp:
         self.tree_hof.pack(side="left", fill="both", expand=True)
         sb_hof.pack(side="right", fill="y")
 
+        # Tab 4: Evolution Console (New)
+        evo_tab = ttk.Frame(self.notebook)
+        self.notebook.add(evo_tab, text="Consola de Evolução (IA)")
+        
+        # --- Evolution Log Area ---
+        evo_log_frame = ttk.LabelFrame(evo_tab, text="Logs de Evolução Genética", padding="5")
+        evo_log_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.evo_log_area = scrolledtext.ScrolledText(evo_log_frame, state='disabled', font=("Consolas", 8)) # Smaller font
+        self.evo_log_area.pack(fill="both", expand=True)
+        # define tags if needed
+        self.evo_log_area.tag_config("highlight", foreground="blue")
+
+
         # --- SETTINGS TAB CONTENT ---
         # --- SETTINGS TAB CONTENT ---
         settings_frame = ttk.LabelFrame(settings_tab, text="Configuração API Kraken", padding="20")
@@ -195,7 +223,7 @@ class BitcoinAIApp:
 
         # Trading Mode
         ttk.Label(opts_frame, text="Modo:").pack(side="left")
-        self.mode_combo_settings = ttk.Combobox(opts_frame, textvariable=self.mode_var, values=["Spot Margin (10x)", "Futures (50x)"], state="readonly", width=18)
+        self.mode_combo_settings = ttk.Combobox(opts_frame, textvariable=self.mode_var, values=["Futures (50x)"], state="readonly", width=18)
         self.mode_combo_settings.pack(side="left", padx=5)
         self.mode_combo_settings.bind("<<ComboboxSelected>>", self.update_leverage_limit)
 
@@ -217,7 +245,7 @@ class BitcoinAIApp:
 
         # Row 0: Trading Mode (Added as requested)
         ttk.Label(params_frame, text="Modo:").grid(row=0, column=0, sticky="w", pady=5)
-        self.mode_combo_main = ttk.Combobox(params_frame, textvariable=self.mode_var, values=["Spot Margin (10x)", "Futures (50x)"], state="readonly", width=18)
+        self.mode_combo_main = ttk.Combobox(params_frame, textvariable=self.mode_var, values=["Futures (50x)"], state="readonly", width=18)
         self.mode_combo_main.grid(row=0, column=1, columnspan=3, sticky="we", padx=5, pady=5)
         self.mode_combo_main.bind("<<ComboboxSelected>>", self.update_leverage_limit)
 
@@ -229,10 +257,10 @@ class BitcoinAIApp:
         ttk.Entry(params_frame, textvariable=self.leverage_var, width=5).grid(row=1, column=3, sticky="w", padx=5)
         
         # Row 2
-        ttk.Label(params_frame, text="Stop Loss (%):").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(params_frame, text="Stop Loss (ROE %):").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(params_frame, textvariable=self.sl_var, width=10).grid(row=2, column=1, sticky="w", padx=5)
         
-        ttk.Label(params_frame, text="Take Profit (%):").grid(row=2, column=2, sticky="w", pady=5)
+        ttk.Label(params_frame, text="Take Profit (ROE %):").grid(row=2, column=2, sticky="w", pady=5)
         ttk.Entry(params_frame, textvariable=self.tp_var, width=10).grid(row=2, column=3, sticky="w", padx=5)
         
         ttk.Separator(control_pane, orient="horizontal").pack(fill="x", pady=15)
@@ -269,16 +297,17 @@ class BitcoinAIApp:
         scrollbar.pack(side="right", fill="y")
 
         # --- Log Area ---
-        log_frame = ttk.LabelFrame(self.root, text="Logs do Sistema", padding="5")
+        log_frame = ttk.LabelFrame(self.root, text="Logs do Sistema (Mercado Real)", padding="5")
         log_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
         
-        self.log_area = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 9))
+        self.log_area = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 10)) # Bigger font for main log
         self.log_area.pack(fill="both", expand=True)
         
         # Defines tags for color
-        self.log_area.tag_config("buy", foreground="green", font=("Consolas", 9, "bold"))
-        self.log_area.tag_config("sell", foreground="red", font=("Consolas", 9, "bold"))
-        self.log_area.tag_config("error", foreground="orange")
+        self.log_area.tag_config("buy", foreground="#00aa00", font=("Consolas", 10, "bold")) # Green
+        self.log_area.tag_config("sell", foreground="#cc0000", font=("Consolas", 10, "bold")) # Red
+        self.log_area.tag_config("error", foreground="#ff3333", font=("Consolas", 10, "bold")) # Bright Red
+        self.log_area.tag_config("warning", foreground="#ff8800", font=("Consolas", 10, "bold")) # Orange
         self.log_area.tag_config("info", foreground="black")
 
         # --- Internal State ---
@@ -315,9 +344,9 @@ class BitcoinAIApp:
 
     def load_settings(self):
         """Loads user settings from json."""
-        if os.path.exists("user_config.json"):
+        if os.path.exists("user_config_roe.json"):
             try:
-                with open("user_config.json", "r") as f:
+                with open("user_config_roe.json", "r") as f:
                     data = json.load(f)
                     # Set StringVars, Entries update automatically
                     if "api_key" in data: self.api_key_var.set(data["api_key"])
@@ -328,11 +357,10 @@ class BitcoinAIApp:
                         self.demo_var.set(data["demo_mode"])
 
                     # Trading Mode
-                    # Trading Mode
-                    saved_mode = data.get('trading_mode', 'Spot Margin (10x)')
-                    if saved_mode not in ["Spot Margin (10x)", "Futures (50x)"]:
-                        # Migrate old 10x to 5x if needed
-                        saved_mode = "Spot Margin (10x)"
+                    saved_mode = data.get('trading_mode', 'Futures (50x)')
+                    if saved_mode not in ["Futures (50x)"]:
+                        # Enforce Futures Only
+                        saved_mode = "Futures (50x)"
                     self.mode_var.set(saved_mode)
 
                     if "amount" in data:
@@ -344,7 +372,7 @@ class BitcoinAIApp:
                     if "tp_pct" in data:
                         self.tp_var.set(str(data["tp_pct"]))
                         
-                self.log("Configuração carregada de user_config.json")
+                self.log("Configuração carregada de user_config_roe.json")
             except Exception as e:
                 self.log(f"Falha ao carregar config: {e}")
 
@@ -359,9 +387,9 @@ class BitcoinAIApp:
             **settings
         }
         try:
-            with open("user_config.json", "w") as f:
+            with open("user_config_roe.json", "w") as f:
                 json.dump(data, f, indent=4)
-            self.log("Configuração salva em user_config.json")
+            self.log("Configuração salva em user_config_roe.json")
         except Exception as e:
             self.log(f"Falha ao salvar config: {e}")
 
@@ -388,21 +416,49 @@ class BitcoinAIApp:
         try:
             while True:
                 msg = self.log_queue.get_nowait()
-                self.log_area.configure(state='normal')
+                msg = str(msg).rstrip() # Remove trailing newlines
+                if not msg: continue # Skip empty lines
+
+                # --- LOG ROUTING LOGIC ---
+                is_evo = False
+                evo_keywords = ['🧬', '🤖', '🧪', 'PROMOTING', 'Gen ', 'Lab:', 'DeepSeek Suggested', 'Strategy Laboratory']
                 
-                # Check for keywords to colorize
-                tag = "info"
-                lower_msg = msg.lower()
-                if "buy" in lower_msg or "compra" in lower_msg:
-                    tag = "buy"
-                elif "sell" in lower_msg or "venda" in lower_msg:
-                    tag = "sell"
-                elif "error" in lower_msg or "crash" in lower_msg or "falha" in lower_msg:
-                    tag = "error"
+                # Check normalized message
+                clean_msg = msg.replace('\r', '').replace('\n', '')
+                
+                for k in evo_keywords:
+                    if k in clean_msg:
+                        is_evo = True
+                        break
+                
+                if is_evo:
+                    # Send to Evolution Tab
+                    if hasattr(self, 'evo_log_area'):
+                        self.evo_log_area.configure(state='normal')
+                        self.evo_log_area.insert(tk.END, msg + '\n')
+                        self.evo_log_area.see(tk.END)
+                        self.evo_log_area.configure(state='disabled')
+                else:
+                    # Send to Main Tab
+                    self.log_area.configure(state='normal')
                     
-                self.log_area.insert(tk.END, msg, tag)
-                self.log_area.see(tk.END)
-                self.log_area.configure(state='disabled')
+                    # COLORING LOGIC
+                    tag = "info"
+                    lower_msg = msg.lower()
+                    
+                    if "decisão: buy" in lower_msg or "executando entrada" in lower_msg or "entrada executada" in lower_msg:
+                        tag = "buy"
+                    elif "decisão: sell" in lower_msg:
+                        tag = "sell"
+                    elif any(x in lower_msg for x in ["error", "crash", "falha", "recusada", "rejeitou", "cancelando", "saldo insuficiente"]):
+                        tag = "error"
+                    elif "holding" in lower_msg or "aguardando" in lower_msg:
+                         pass # Normal info
+                        
+                    self.log_area.insert(tk.END, msg + '\n', tag)
+                    self.log_area.see(tk.END)
+                    self.log_area.configure(state='disabled')
+                    
         except queue.Empty:
             pass
         finally:
@@ -473,15 +529,31 @@ class BitcoinAIApp:
                 return
                 
             try:
+                # User Input: "5" -> 5.0
+                raw_amount = float(self.amount_var.get())
+                raw_leverage = float(self.leverage_var.get())
+                
+                # User Input: "20" -> 20% ROE -> Convert to Price Move %
+                # Price Move % = (ROE % / 100) / Leverage
+                # Example: 20% ROE / 10x = 0.02 (2% Price Move)
+                
+                raw_sl_roe = float(self.sl_var.get())
+                raw_tp_roe = float(self.tp_var.get())
+                
+                sl_pct_move = (raw_sl_roe / 100.0) / raw_leverage
+                tp_pct_move = (raw_tp_roe / 100.0) / raw_leverage
+                
                 user_settings = {
-                    'amount': float(self.amount_var.get()),
-                    'leverage': float(self.leverage_var.get()),
-                    'sl_pct': float(self.sl_var.get()),
-                    'tp_pct': float(self.tp_var.get()),
+                    'amount': raw_amount,
+                    'leverage': raw_leverage,
+                    'sl_pct': sl_pct_move, # Sending Price Move % to Trader
+                    'tp_pct': tp_pct_move, # Sending Price Move % to Trader
                     'demo_mode': self.demo_var.get(),
                     'deepseek_key': self.deepseek_key_var.get().strip(),
                     'trading_mode': self.mode_var.get()
                 }
+                
+                self.log(f"Config: ROE Alvo TP {raw_tp_roe}% -> Move {tp_pct_move*100:.2f}%")
             except ValueError:
                 self.log("ERRO: Valores numéricos inválidos.")
                 return

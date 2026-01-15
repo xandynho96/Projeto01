@@ -24,7 +24,7 @@ class BitcoinTrader:
             
             # Set Symbol dynamically
             if "Futures" in trading_mode:
-                config.SYMBOL = 'PF_XBTUSD'
+                config.SYMBOL = 'BTC/USD:USD' # Linear Perps (USD Margin)
             else:
                 config.SYMBOL = 'BTC/USD'
                 
@@ -399,7 +399,7 @@ class BitcoinTrader:
 
             # Use User Settings
             # 'amount' is treated as MARGIN (Collateral) now, per user expectation.
-            margin_usd = float(self.user_settings.get('amount', 20.0))
+            margin_usd = float(self.user_settings.get('amount', 5.0))
             
             # --- SAFETY CHECK: BALANCE ---
             free_balance = self.dm.get_balance(type='free')
@@ -414,62 +414,88 @@ class BitcoinTrader:
             # Effective Position Size = Margin * Leverage
             total_position_usd = margin_usd * leverage
             
-            # Calculate BTC amount based on Total Position Size
-            amount_btc = total_position_usd / current_price
+            # --- AMOUNT CALCULATION (SPOT VS FUTURES) ---
+            # Kraken Futures (PF_XBTUSD) uses Inverse Contracts where 1 Contract = 1 USD (mostly)
+            # Spot uses Base Currency (BTC)
             
-            # Ensure a minimum size
-            # Kraken min is often 0.0001 or 0.0002 BTC.
-            if amount_btc < 0.0001:
-                self.logger.warning(f"Qtd calculada {amount_btc:.6f} BTC (Margin ${margin_usd} x {leverage}) < Mínimo. Ajustando para 0.0001")
-                amount_btc = 0.0001
+            if "Futures" in self.user_settings.get('trading_mode', ''):
+                # FUTURES: Amount in USD Contracts (Integers)
+                # Ensure minimum 1 contract
+                amount_to_trade = int(total_position_usd)
+                if amount_to_trade < 1:
+                    self.logger.warning(f"⚠️ Margem muito baixa para Futuros. Mínimo 1 Contrato ($1). Ajustando...")
+                    amount_to_trade = 1
+                    
+                self.logger.info(f"🔮 MODO FUTUROS: Trade de {amount_to_trade} Contratos (USD) [Alavancagem {leverage}x]")
                 
-            self.logger.info(f"Alvo: Margin ${margin_usd} x {leverage} = ${total_position_usd:.2f} (~{amount_btc:.5f} BTC)")
-
-            # --- DYNAMIC ATR EXITS ---
-            atr = df['atr'].iloc[-1]
-            
-            # Multipliers for Scalping
-            atr_sl_mult = 1.5
-            atr_tp_mult = 2.5
-            
-            if atr > 0:
-                # Dynamic Logic
-                self.logger.info(f"Usando ATR ({atr:.2f}) para Stops Dinâmicos.")
-                if signal == "buy":
-                    sl_price = current_price - (atr * atr_sl_mult)
-                    tp_price = current_price + (atr * atr_tp_mult)
-                else: # sell
-                    sl_price = current_price + (atr * atr_sl_mult)
-                    tp_price = current_price - (atr * atr_tp_mult)
+                # Check actual open positions
+                positions = self.dm.get_open_positions()
+                if positions:
+                    self.logger.info(f"📊 Posições Abertas no Exchange: {len(positions)}")
+                    for p in positions:
+                        self.logger.info(f"   > {p['symbol']}: {p['contracts']} contratos | PNL: {p['unrealizedPnl']}")
             else:
-                # Fallback to percentages
-                self.logger.warning("ATR inválido/zero. Usando Configuração Manual %.")
-                sl_pct = float(self.user_settings.get('sl_pct', 2.0))
-                tp_pct = float(self.user_settings.get('tp_pct', 4.0))
+                # SPOT: Amount in BTC
+                amount_to_trade = total_position_usd / current_price
                 
-                if signal == "buy":
-                    sl_price = current_price * (1 - sl_pct/100)
-                    tp_price = current_price * (1 + tp_pct/100)
-                else: # sell
-                    sl_price = current_price * (1 + sl_pct/100)
-                    tp_price = current_price * (1 - tp_pct/100)
+                # Ensure a minimum size (Kraken Min ~0.0001-0.0002 BTC)
+                if amount_to_trade < 0.0001:
+                    self.logger.warning(f"⚠️ Qtd {amount_to_trade:.6f} BTC < Mínimo Kraken. Ajustando para 0.0001")
+                    amount_to_trade = 0.0001
+                
+                self.logger.info(f"🛒 MODO SPOT: Trade de {amount_to_trade:.6f} BTC (Position ${total_position_usd:.2f})")
+
+            # --- STRATEGY: HIGH ROE (30-60%) ---
+            # User Request: "Always seek 30-60% of entry value as profit"
+            # --- TP / SL CALCULATION ---
+            # Priority: User Settings (Price Move %) > Random High ROE
             
+            # Check if User Settings provided specific moves
+            # The GUI now converts ROE Input -> Price Move % before sending here
+            user_tp_move = float(self.user_settings.get('tp_pct', 0.0))
+            user_sl_move = float(self.user_settings.get('sl_pct', 0.0))
+            
+            if user_tp_move > 0 and user_sl_move > 0:
+                # Use User Defined
+                tp_move_pct = user_tp_move
+                sl_move_pct = user_sl_move
+                self.logger.info(f"🎯 Alvo Definido pelo Usuário: TP {tp_move_pct*100:.2f}% Mov | SL {sl_move_pct*100:.2f}% Mov")
+            else:
+                # Fallback to Random High ROE Strategy
+                import random
+                target_roe = random.uniform(0.30, 0.60) # Target 30% to 60%
+                
+                # Risk/Reward Ratio 1:2
+                risk_roe = target_roe / 2.0 
+                
+                tp_move_pct = target_roe / leverage
+                sl_move_pct = risk_roe / leverage
+                
+                self.logger.info(f"🎯 Alvo ROE (Auto): {target_roe*100:.1f}% (Lev {leverage}x -> Move {tp_move_pct*100:.2f}%)")
+            
+            if signal == "buy":
+                tp_price = current_price * (1 + tp_move_pct)
+                sl_price = current_price * (1 - sl_move_pct)
+            else: # sell
+                tp_price = current_price * (1 - tp_move_pct)
+                sl_price = current_price * (1 + sl_move_pct)
+
             # Rounding
             sl_price = round(sl_price, 1)
             tp_price = round(tp_price, 1)
-            
-            # --- PROFIT GUARD: Ensure TP covers Fees (~0.52% + Buffer) ---
-            MIN_PROFIT_PCT = 0.006 # 0.6%
+
+            # --- PROFIT GUARD (Redundant now but good for safety) ---
+            # Ensure TP covers Fees (~0.26% Taker Entrance + ~0.16% Maker Exit + Slippage)
+            MIN_PROFIT_PCT = 0.0085 # 0.85%
             
             if signal == "buy":
                 min_tp = current_price * (1 + MIN_PROFIT_PCT)
                 if tp_price < min_tp:
-                    self.logger.info(f"🛡️ TP Ajustado para cobrir taxas: {tp_price:.2f} -> {min_tp:.2f}")
+                    # Should rarely happen with High ROE, but safety first
                     tp_price = min_tp
             elif signal == "sell":
                 min_tp = current_price * (1 - MIN_PROFIT_PCT)
                 if tp_price > min_tp:
-                    self.logger.info(f"🛡️ TP Ajustado para cobrir taxas: {tp_price:.2f} -> {min_tp:.2f}")
                     tp_price = min_tp
                     
             tp_price = round(tp_price, 1)
@@ -485,18 +511,19 @@ class BitcoinTrader:
             }
 
             # Execute Entry (Market Order + Attached SL)
-            self.logger.info(f"🚀 Executando entrada {signal.upper()} de {amount_btc:.5f} BTC...")
-            entry_order = self.dm.execute_order(config.SYMBOL, signal, amount_btc, type='market', params=entry_params)
+            # Execute Entry (Market Order + Attached SL)
+            self.logger.info(f"🚀 Executando entrada {signal.upper()} de {amount_to_trade}...")
+            entry_order = self.dm.execute_order(config.SYMBOL, signal, amount_to_trade, type='market', params=entry_params)
             
             if entry_order and 'id' in entry_order:
-                self.logger.info(f"✅ Entrada Executada. ID: {entry_order['id']}")
-                self.logger.info(f"   (Stop Loss anexado em {sl_price:.2f})")
+                self.logger.info(f"✅ Entrada a Mercado Executada. ID: {entry_order['id']}")
+                self.logger.info(f"   (Ordem Condicional de Stop Loss criada em {sl_price:.2f} - Ver aba 'Condicionais' na Kraken)")
                 
                 # Record trade to history
                 self.dm.save_trade(
                     symbol=config.SYMBOL, 
                     side=signal, 
-                    amount=amount_btc, 
+                    amount=amount_to_trade, 
                     price=current_price, 
                     status='open'
                 )
@@ -508,7 +535,7 @@ class BitcoinTrader:
                 tp_params = {'leverage': leverage, 'reduceOnly': True}
                 
                 self.logger.info(f"💰 Colocando Take Profit (Limit) em {tp_price:.2f}...")
-                self.dm.execute_order(config.SYMBOL, tp_side, amount_btc, type='limit', price=tp_price, params=tp_params)
+                self.dm.execute_order(config.SYMBOL, tp_side, amount_to_trade, type='limit', price=tp_price, params=tp_params)
                 
             else:
                 error_msg = entry_order.get('error', 'Unknown Error') if entry_order else 'No Response'

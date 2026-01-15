@@ -64,3 +64,6 @@ crypto_data.db
 *.keras
 *.pkl
 *.csv
+user_config.json
+user_config_roe.json
+key_config.json
