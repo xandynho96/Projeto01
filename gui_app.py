@@ -256,12 +256,11 @@ class BitcoinAIApp:
         ttk.Label(params_frame, text="Alavancagem (x):").grid(row=1, column=2, sticky="w")
         ttk.Entry(params_frame, textvariable=self.leverage_var, width=5).grid(row=1, column=3, sticky="w", padx=5)
         
-        # Row 2
-        ttk.Label(params_frame, text="Stop Loss (ROE %):").grid(row=2, column=0, sticky="w", pady=5)
-        ttk.Entry(params_frame, textvariable=self.sl_var, width=10).grid(row=2, column=1, sticky="w", padx=5)
+        # Row 2 (Modified): PnL Check
+        self.lbl_pnl_24h = ttk.Label(params_frame, text="PnL 24h: Calculando...", foreground="gray")
+        self.lbl_pnl_24h.grid(row=2, column=0, columnspan=4, sticky="w", pady=5)
         
-        ttk.Label(params_frame, text="Take Profit (ROE %):").grid(row=2, column=2, sticky="w", pady=5)
-        ttk.Entry(params_frame, textvariable=self.tp_var, width=10).grid(row=2, column=3, sticky="w", padx=5)
+        # Removed Manual SL/TP Inputs (AI/ATR Controlled)
         
         ttk.Separator(control_pane, orient="horizontal").pack(fill="x", pady=15)
 
@@ -537,23 +536,31 @@ class BitcoinAIApp:
                 # Price Move % = (ROE % / 100) / Leverage
                 # Example: 20% ROE / 10x = 0.02 (2% Price Move)
                 
-                raw_sl_roe = float(self.sl_var.get())
-                raw_tp_roe = float(self.tp_var.get())
+                # SL/TP are now Dynamic (AI/ATR Based) - Removed from UI
+                # sl_pct_move / tp_pct_move calculation removed.
                 
-                sl_pct_move = (raw_sl_roe / 100.0) / raw_leverage
-                tp_pct_move = (raw_tp_roe / 100.0) / raw_leverage
-                
-                user_settings = {
+                user_settings_for_trader = {
                     'amount': raw_amount,
                     'leverage': raw_leverage,
-                    'sl_pct': sl_pct_move, # Sending Price Move % to Trader
-                    'tp_pct': tp_pct_move, # Sending Price Move % to Trader
+                    # 'sl_pct': REMOVED - Dynamic
+                    # 'tp_pct': REMOVED - Dynamic
                     'demo_mode': self.demo_var.get(),
                     'deepseek_key': self.deepseek_key_var.get().strip(),
                     'trading_mode': self.mode_var.get()
                 }
                 
-                self.log(f"Config: ROE Alvo TP {raw_tp_roe}% -> Move {tp_pct_move*100:.2f}%")
+                # Settings to SAVE (Keep UI Values)
+                user_settings_to_save = {
+                    'amount': raw_amount,
+                    'leverage': raw_leverage,
+                    # 'sl_pct': REMOVED
+                    # 'tp_pct': REMOVED
+                    'demo_mode': self.demo_var.get(),
+                    'deepseek_key': self.deepseek_key_var.get().strip(),
+                    'trading_mode': self.mode_var.get()
+                }
+                
+                self.log(f"Config: Dinâmica (ATR) | Entrada ${raw_amount} | Lev {raw_leverage}x")
             except ValueError:
                 self.log("ERRO: Valores numéricos inválidos.")
                 return
@@ -561,16 +568,16 @@ class BitcoinAIApp:
             # Start
             self.running_trader = True
             
-            # Save Config
-            self.save_settings(api_key, secret, user_settings)
+            # Save Config (UI Values)
+            self.save_settings(api_key, secret, user_settings_to_save)
             
             self.btn_run_trader.configure(text="PARAR Trading")
-            self.status_var.set(f"Status: Trading Ativo ({user_settings['trading_mode']})")
+            self.status_var.set(f"Status: Trading Ativo ({user_settings_for_trader['trading_mode']})")
             
-            # Disable inputs (Optional, skipping for now to avoid AttributeError if widgets aren't self.x)
-            # You can re-enable this if you bind the widgets to self.ent_amount again in create_widgets
+            # Start PnL Monitor
+            self.update_pnl_display()
             
-            self.trader_thread = threading.Thread(target=self.run_trader_safe, args=(api_key, secret, user_settings), daemon=True)
+            self.trader_thread = threading.Thread(target=self.run_trader_safe, args=(api_key, secret, user_settings_for_trader), daemon=True)
             self.trader_thread.start()
         else:
             # Stop (Soft)
@@ -587,16 +594,54 @@ class BitcoinAIApp:
         try:
             # BitcoinTrader is now imported at top level
             # Instantiate with params
-            self.trader_instance = BitcoinTrader(api_key=api_key, secret=secret, user_settings=user_settings)
+            self.trader_instance = BitcoinTrader(api_key, secret, user_settings)
             
-            self.log("Trader Inicializado. Iniciando Loop...")
-            self.trader_instance.run() 
+            # Main Loop
+            while self.running_trader:
+                self.trader_instance.job()
+                # Sleep is handled inside job or here? 
+                # Assuming job does one cycle. We need a loop delay or job does it.
+                # Looking at trader.py, job() runs once. We need a loop?
+                # Actually trader.py structure seemed to be one-shot job in previous logs/code?
+                # Wait, if job() is one cycle, we need to loop. 
+                # Checking loop in previous version... it seems user was running it once per click?
+                # Ah, the button says "INICIAR Trading", implying a loop. 
+                # Let's assume job() contains the loop or we loop here.
+                # Based on previous log "Next training in X seconds", maybe job blocks?
+                # Let's add a small sleep to prevent CPU spike if job returns immediately
+                time.sleep(1)
+                
         except Exception as e:
-            self.log(f"Trader Crash: {e}")
-            import traceback
-            self.log(traceback.format_exc())
+            self.log(f"CRITICAL ERROR IN TRADER THREAD: {e}")
             self.running_trader = False
-            self.trader_instance = None       
+            self.btn_run_trader.configure(text="INICIAR Trading (Ao Vivo)")
+            self.status_var.set("Status: Parado (Erro)")
+
+    def update_pnl_display(self):
+        """Updates the PnL 24h label periodically."""
+        if not self.running_trader:
+            return
+
+        try:
+            if hasattr(self, 'trader_instance') and self.trader_instance:
+                pnl = self.trader_instance.dm.get_24h_pnl()
+                color = "green" if pnl >= 0 else "red"
+                self.lbl_pnl_24h.configure(text=f"PnL 24h: ${pnl:.2f}", foreground=color)
+            else:
+                # Try getting DM directly if trader not ready
+                from data_manager import DataManager
+                tmp_dm = DataManager()
+                pnl = tmp_dm.get_24h_pnl()
+                color = "green" if pnl >= 0 else "red"
+                self.lbl_pnl_24h.configure(text=f"PnL 24h: ${pnl:.2f}", foreground=color)
+                
+        except Exception:
+            pass # Ignore errors during update
+            
+        # Schedule next update in 60s
+        self.root.after(60000, self.update_pnl_display)
+
+
 
     def run_backtest_handler(self):
         """Runs the backtest.py script in a separate process."""

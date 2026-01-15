@@ -419,14 +419,25 @@ class BitcoinTrader:
             # Spot uses Base Currency (BTC)
             
             if "Futures" in self.user_settings.get('trading_mode', ''):
-                # FUTURES: Amount in USD Contracts (Integers)
-                # Ensure minimum 1 contract
-                amount_to_trade = int(total_position_usd)
-                if amount_to_trade < 1:
-                    self.logger.warning(f"⚠️ Margem muito baixa para Futuros. Mínimo 1 Contrato ($1). Ajustando...")
-                    amount_to_trade = 1
+                # FUTURES: 
+                # Check for Linear (BTC/USD:USD - Amount in BTC) or Inverse (BTC/USD - Amount in USD contracts)
+                if ':USD' in config.SYMBOL:
+                    # LINEAR FUTURE
+                    amount_to_trade = total_position_usd / current_price
+                    # Min size approx 0.0001 BTC usually
+                    if amount_to_trade < 0.0001:
+                         self.logger.warning(f"⚠️ Qtd {amount_to_trade:.6f} < Mínimo. Ajustando para 0.0001")
+                         amount_to_trade = 0.0001
+                    self.logger.info(f"🔮 MODO FUTUROS (LINEAR): Trade de {amount_to_trade:.6f} BTC (Pos ${total_position_usd:.2f})")
+                else:
+                    # INVERSE FUTURE (Legacy/Standard)
+                    # Amount in USD Contracts (Integers)
+                    amount_to_trade = int(total_position_usd)
+                    if amount_to_trade < 1:
+                        self.logger.warning(f"⚠️ Margem muito baixa para Futuros. Mínimo 1 Contrato ($1). Ajustando...")
+                        amount_to_trade = 1
                     
-                self.logger.info(f"🔮 MODO FUTUROS: Trade de {amount_to_trade} Contratos (USD) [Alavancagem {leverage}x]")
+                    self.logger.info(f"🔮 MODO FUTUROS (INVERSO): Trade de {amount_to_trade} Contratos (USD) [Alavancagem {leverage}x]")
                 
                 # Check actual open positions
                 positions = self.dm.get_open_positions()
@@ -445,34 +456,33 @@ class BitcoinTrader:
                 
                 self.logger.info(f"🛒 MODO SPOT: Trade de {amount_to_trade:.6f} BTC (Position ${total_position_usd:.2f})")
 
-            # --- STRATEGY: HIGH ROE (30-60%) ---
-            # User Request: "Always seek 30-60% of entry value as profit"
-            # --- TP / SL CALCULATION ---
-            # Priority: User Settings (Price Move %) > Random High ROE
+            # --- STRATEGY: DYNAMIC SL/TP (ATR BASED) ---
+            # Replaces User Fixed % with Market Volatility Logic
             
-            # Check if User Settings provided specific moves
-            # The GUI now converts ROE Input -> Price Move % before sending here
-            user_tp_move = float(self.user_settings.get('tp_pct', 0.0))
-            user_sl_move = float(self.user_settings.get('sl_pct', 0.0))
+            # 1. Get Current ATR (Volatility)
+            atr_value = df.iloc[-1]['atr']
+            current_volatility_pct = atr_value / current_price
             
-            if user_tp_move > 0 and user_sl_move > 0:
-                # Use User Defined
-                tp_move_pct = user_tp_move
-                sl_move_pct = user_sl_move
-                self.logger.info(f"🎯 Alvo Definido pelo Usuário: TP {tp_move_pct*100:.2f}% Mov | SL {sl_move_pct*100:.2f}% Mov")
-            else:
-                # Fallback to Random High ROE Strategy
-                import random
-                target_roe = random.uniform(0.30, 0.60) # Target 30% to 60%
-                
-                # Risk/Reward Ratio 1:2
-                risk_roe = target_roe / 2.0 
-                
-                tp_move_pct = target_roe / leverage
-                sl_move_pct = risk_roe / leverage
-                
-                self.logger.info(f"🎯 Alvo ROE (Auto): {target_roe*100:.1f}% (Lev {leverage}x -> Move {tp_move_pct*100:.2f}%)")
+            # 2. Dynamic Targets
+            # SL = 1.5x ATR (To avoid noise)
+            # TP = 3.0x ATR (To catch trends, Risk:Reward 1:2)
             
+            sl_move_pct = current_volatility_pct * 1.5
+            tp_move_pct = current_volatility_pct * 3.0
+            
+            # 3. Fee Protection Guard
+            # Estimate Costs: Taker (0.05%) + Maker (0.02%) + Slippage (~0.05%) = ~0.12% round trip
+            # Kraken Futures Fees vary, taking conservative estimate 0.2% total
+            ESTIMATED_FEES_PCT = 0.002
+            
+            if tp_move_pct < ESTIMATED_FEES_PCT:
+                self.logger.warning(f"⛔ Volatilidade muito baixa (TP {tp_move_pct*100:.3f}% < Taxas {ESTIMATED_FEES_PCT*100}%). Trade cancelado.")
+                return
+
+            self.logger.info(f"🎯 Alvo Dinâmico (ATR): Volatilidade {current_volatility_pct*100:.3f}%")
+            self.logger.info(f"   > TP: {tp_move_pct*100:.2f}% ({tp_move_pct/current_volatility_pct:.1f}x ATR)")
+            self.logger.info(f"   > SL: {sl_move_pct*100:.2f}% ({sl_move_pct/current_volatility_pct:.1f}x ATR)")
+
             if signal == "buy":
                 tp_price = current_price * (1 + tp_move_pct)
                 sl_price = current_price * (1 - sl_move_pct)
@@ -483,22 +493,9 @@ class BitcoinTrader:
             # Rounding
             sl_price = round(sl_price, 1)
             tp_price = round(tp_price, 1)
-
-            # --- PROFIT GUARD (Redundant now but good for safety) ---
-            # Ensure TP covers Fees (~0.26% Taker Entrance + ~0.16% Maker Exit + Slippage)
-            MIN_PROFIT_PCT = 0.0085 # 0.85%
             
-            if signal == "buy":
-                min_tp = current_price * (1 + MIN_PROFIT_PCT)
-                if tp_price < min_tp:
-                    # Should rarely happen with High ROE, but safety first
-                    tp_price = min_tp
-            elif signal == "sell":
-                min_tp = current_price * (1 - MIN_PROFIT_PCT)
-                if tp_price > min_tp:
-                    tp_price = min_tp
-                    
-            tp_price = round(tp_price, 1)
+            # Legacy Profit Guard Removed (Handled by Fee Protection above)
+            # tp_price is already set dynamically by ATR.
 
             # Execution Params
             # Use Conditional Close for Stop Loss (More robust on Kraken Spot)

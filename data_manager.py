@@ -555,6 +555,23 @@ class DataManager:
         finally:
             session.close()
 
+    def get_24h_pnl(self):
+        """Calculates total PNL for the last 24 hours."""
+        session = self.Session()
+        try:
+            one_day_ago = datetime.utcnow() - pd.Timedelta(hours=24)
+            result = session.query(Trade).filter(
+                Trade.status == 'closed', 
+                Trade.timestamp >= one_day_ago
+            ).all()
+            
+            total_pnl = sum(t.pnl for t in result if t.pnl is not None)
+            return total_pnl
+        except Exception as e:
+            print(f"Error calculating 24h PNL: {e}")
+            return 0.0
+        finally:
+            session.close()
 
     def save_strategy(self, genome, origin='evolution', regime='ANY', status='lab'):
         """Saves a strategy genome to the database."""
