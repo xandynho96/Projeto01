@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['gui_app.py'],
+    ['main_launcher.py'],
     pathex=['C:\\Users\\Alexandre\\Documents\\Testes\\Projeto01'],
     binaries=[],
-    datas=[('dashboard.py', '.'), ('app_icon.png', '.'), ('ai_brain.py', '.'), ('trader.py', '.'), ('technical_analysis.py', '.'), ('data_manager.py', '.'), ('config.py', '.'), ('logger.py', '.'), ('evolution.py', '.')],
-    hiddenimports=['pandas', 'numpy', 'sklearn', 'sklearn.utils._cython_blas', 'sklearn.neighbors.typedefs', 'sklearn.neighbors.quad_tree', 'sklearn.tree', 'sklearn.tree._utils', 'ta', 'ccxt', 'sqlalchemy', 'schedule', 'plotly', 'streamlit', 'custom_strategies', 'trader', 'ai_brain', 'technical_analysis', 'logger', 'data_manager', 'config', 'evolution'],
+    datas=[('app/dashboard.py', 'app'), ('app_icon.png', '.'), ('app', 'app')],
+    hiddenimports=['pandas', 'numpy', 'sklearn', 'sklearn.utils._cython_blas', 'sklearn.neighbors.typedefs', 'sklearn.neighbors.quad_tree', 'sklearn.tree', 'sklearn.tree._utils', 'ta', 'ccxt', 'sqlalchemy', 'schedule', 'plotly', 'streamlit', 'custom_strategies', 'app.trader', 'app.core.ai_brain', 'app.core.technical_analysis', 'app.utils.logger', 'app.core.data_manager', 'app.utils.config', 'app.core.evolution'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -1,0 +1,10 @@
+{
+    "api_key": "F0bVhdPmOHIPaspg06uW9C7iHC5KQRxNK4u1/RpV7qHFWP+k+XsyD1lm",
+    "secret": "gVXXXMbpjchhfcpXJpK1anTIIY7ezUSeWn9+vzW2oGQfbf1E+v6Le43R00vmt0MmmCqVdaAf/usYS1ImaO62Vw==",
+    "demo_mode": true,
+    "amount": 50.0,
+    "leverage": 10.0,
+    "sl_pct": 0.18,
+    "tp_pct": 0.24,
+    "trading_mode": "Spot Margin (10x)"
+}
