@@ -139,7 +139,7 @@ class BitcoinTrader:
                  self.last_training_time = datetime.now()
              else:
                  self.logger.info("🧠 CÉREBRO: Modelo novo ou não treinado. Iniciando carga de memória...")
-                 self.train_on_historical_memory(limit=50000)
+                 self.train_on_historical_memory(limit=5000)
              
         except Exception as e:
             self.logger.error(f"Erro na preparação inicial: {e}")
@@ -260,7 +260,7 @@ class BitcoinTrader:
             self.logger.info("🧠 CÉREBRO: Absorvendo novos dados de mercado (Retreinamento)...")
             try:
                 # Use Deep Memory Training instead of just current DF
-                self.train_on_historical_memory(limit=50000)
+                self.train_on_historical_memory(limit=5000)
             except Exception as e:
                 self.logger.error(f"Falha ao atualizar modelo IA: {e}")
         else:
