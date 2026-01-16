@@ -235,7 +235,7 @@ def evolution_worker():
     
     STATE_FILE = os.path.join(BASE_DIR, "data", "evolution_state.json")
     MAX_DURATION = 3600 # 1 Hour in seconds
-    COOLDOWN = 23 * 3600 # 23 Hours (Wait 24h total roughly, or just check next day)
+    COOLDOWN = 10 # 10 Seconds Cooldown (Continuous Mode)
     
     while True:
         # Check if we can run
@@ -250,12 +250,12 @@ def evolution_worker():
             except: pass
             
         time_since = time.time() - last_run
-        if time_since < 24 * 3600: # Less than 24h passed
+        if time_since < COOLDOWN: # Less than cooldown passed
              if time_since < 0: last_run = 0 # Clock skew fix
              else:
-                 wait_time = (24 * 3600) - time_since
-                 if wait_time > 60: # Only print if meaningful wait
-                    print(f"⏳ Evolution Cooldown. Next run in {wait_time/3600:.1f} hours.")
+                 wait_time = COOLDOWN - time_since
+                 if wait_time > 1: # Only print if meaningful wait
+                    print(f"⏳ Evolution Cycle Complete. Restarting in {wait_time:.1f} seconds...")
                  
                  # Sleep in chunks to allow thread kill
                  sleep_chunks = int(min(wait_time, 300)) # Check every 5 mins max
@@ -266,7 +266,7 @@ def evolution_worker():
             continue
 
         # START RUN
-        print("🚀 Starting Daily Evolution Cycle (Max 1h)...")
+        print("🚀 Starting Continuous Evolution Cycle (Max 1h)...")
         start_time = time.time()
         
         # Initialize Context for this run
@@ -283,7 +283,7 @@ def evolution_worker():
         while True:
             # Check Time Limit
             if time.time() - start_time > MAX_DURATION:
-                print("⏰ Daily Limit Reached. Saving State...")
+                print("⏰ Cycle Duration Reached. Saving State & Restarting...")
                 try:
                     state = {'last_run': time.time()}
                     # Ensure data dir exists
@@ -308,10 +308,9 @@ def evolution_worker():
             # We check the previous generation's best (stored in 'best' variable from prev loop)
             # Initialize 'best' before loop to avoid NameError on first run if needed, but 'best' is defined at end of loop.
             # actually we check at the END of loop or start of next. Let's do it here assuming 'best' exists from gen > 1
-            if generation > 50 and 'best' in locals() and best.winrate == 0:
-                 if not hasattr(top_level, 'stagnation_counter'): top_level_stagnation = 0 # Dummy
-                 # Actually, let's track a counter locally
-                 pass 
+            # 2. Check Stagnation (If best WR is 0% for too long)
+            # (Logic merged into the simpler check below)
+            pass 
 
             # Simpler Stagnation Logic:
             # If we are at gen 50, 100, 150... and best.winrate is still 0, RESET population.

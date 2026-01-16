@@ -304,7 +304,9 @@ class BitcoinTrader:
             STOCH_SELL = 80
             
             signal = "NEUTRO"
-            strategy_name = "NEUTRO"
+            strategy_name = "NEUTRO" # Initialize default to avoid unbound error
+
+            # BUY CONDITION: RSI Low AND Stoch Low AND Price near/below BB Low
 
             # BUY CONDITION: RSI Low AND Stoch Low AND Price near/below BB Low
             if rsi < RSI_BUY and stoch_k < STOCH_BUY:
@@ -330,19 +332,24 @@ class BitcoinTrader:
 
         else:
             # Normal AI Logic
-            # self.logger.info(f"Preço Atual: {current_price:.2f}")
-            # self.logger.info(f"Preço Previsto (Prox. Vela): {predicted_price:.2f}")
-            # self.logger.info(f"Retorno Previsto: {predicted_return*100:.4f}%")
-             
-            change_percent = predicted_return * 100
-            # self.logger.info(f"Mudança Esperada: {change_percent:.4f}%")
+            # Calculate Indicators commonly used for logging/logic
+            row = df.iloc[-1]
+            rsi = row.get('rsi', 50)
+            stoch_k = row.get('stoch_k', 50)
+            stoch_rsi_k = row.get('stoch_rsi_k', 0.5)
+            bb_low = row['bb_low']
+            bb_high = row['bb_high']
+            close_price = row['close']
 
+            change_percent = predicted_return * 100
             
             # Spot Fees are ~0.26% Taker.
             # LOWERING threshold to 0.02% to be more aggressive availability for scalping
             threshold = 0.02 
             
             signal = "NEUTRO"
+            strategy_name = "NEUTRO" # Default
+
             if change_percent > threshold:
                 signal = "buy"
             elif change_percent < -threshold:
@@ -352,12 +359,7 @@ class BitcoinTrader:
             if signal == "NEUTRO":
                  # Use current price as base
                  # --- ADVANCED SCALPING STRATEGY (Confluence) ---
-                row = df.iloc[-1]
-                close_price = row['close'] # Define close_price
-                rsi = row.get('rsi', 50)
-                stoch_k = row.get('stoch_k', 50)
-                bb_low = row.get('bb_low', 0)
-                bb_high = row.get('bb_high', 0)
+                # (Variables row, rsi, stoch_k, etc. are already defined above)
                 
                 # Thresholds (Aggressive Scalping)
                 RSI_BUY = 40  # Slightly relaxed
@@ -381,7 +383,11 @@ class BitcoinTrader:
                         strategy_name = "Hybrid Scalper (Overbought)"
                 
             if signal != "NEUTRO":
-                     self.logger.info(f"🔄 HÍBRIDO: AI 'Neutro' anulado por {strategy_name}. (RSI={rsi:.1f}, Stoch={stoch_k:.1f})")
+                     # Ensure strategy_name exists if we got here via Fallback 
+                     if 'strategy_name' not in locals(): strategy_name = "Hybrid/Unknown"
+                     # Logic to only log Hybrid if it WAS a hybrid decision
+                     if strategy_name != "NEUTRO":
+                        self.logger.info(f"🔄 HÍBRIDO: AI 'Neutro' anulado por {strategy_name}. (RSI={rsi:.1f}, Stoch={stoch_k:.1f})")
             
         self.logger.info(f"DECISÃO: {signal.upper() if signal != 'NEUTRO' else 'AGUARDANDO OPORTUNIDADE (SCALPING)'}")
         

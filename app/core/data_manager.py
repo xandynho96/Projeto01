@@ -49,15 +49,29 @@ class StrategyModel(Base):
 
 class DataManager:
     def __init__(self, db_url=config.DB_URL):
-        self.engine = create_engine(db_url)
-        print(f"🔌 Database Connection: {self.engine.url}")
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind=self.engine)
-        self.Session = sessionmaker(bind=self.engine)
-        self.exchange = None
-        
         # Initial connection if keys are present (optional, can be overridden)
         self.demo_mode = False
+        
+        # SQLITE OPTIMIZATIONS FOR CONCURRENCY (WAL MODE)
+        if 'sqlite' in db_url:
+            connect_args = {'check_same_thread': False}
+            self.engine = create_engine(db_url, connect_args=connect_args)
+            
+            # Enable Write-Ahead Logging (WAL) to allow concurrent reads/writes
+            with self.engine.connect() as conn:
+                try:
+                    conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+                    conn.exec_driver_sql("PRAGMA busy_timeout=5000;") # Wait up to 5s if locked
+                    conn.exec_driver_sql("PRAGMA synchronous=NORMAL;") # Faster writes, safe enough for WAL
+                    print("✅ SQLite WAL Mode Enabled (Non-blocking I/O).")
+                except Exception as e:
+                    print(f"Warning: Could not enable WAL mode: {e}")
+        else:
+             self.engine = create_engine(db_url)
+             
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine)
+        
         if config.KRAKEN_API_KEY:
             self.connect_exchange(config.KRAKEN_API_KEY, config.KRAKEN_SECRET)
             
@@ -189,7 +203,8 @@ class DataManager:
         df_1m.ffill(inplace=True)
         df_1m.fillna(0, inplace=True)
         
-        print(f"✅ Multi-Timeframe Merge Complete. Shape: {df_1m.shape}")
+        # df_1m.fillna(0, inplace=True)
+        # print(f"✅ Multi-Timeframe Merge Complete. Shape: {df_1m.shape}")
         return df_1m
 
     def fetch_full_history(self, start_year=2020, symbol=None, timeframe=None):
