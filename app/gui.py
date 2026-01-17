@@ -618,6 +618,10 @@ class BitcoinAIApp:
             # Instantiate with params
             self.trader_instance = BitcoinTrader(api_key, secret, user_settings)
             
+            # NOW perform heavy training (GUI already has reference to instance)
+            self.log("Trader inicializado. Verificando cérebro da IA (pode demorar alguns segundos)...")
+            self.trader_instance._initial_training()
+            
             # Main Loop
             while self.running_trader:
                 self.trader_instance.job()

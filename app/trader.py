@@ -37,7 +37,8 @@ class BitcoinTrader:
         self.last_training_time = datetime.min # Track last training for continuous learning
         
         # Ensure we have a trained model or train on startup
-        self._initial_training()
+        # MOVED to explicit call to prevent GUI blocking
+        # self._initial_training()
         
         # Set Leverage if provided
         leverage = float(user_settings.get('leverage', config.LEVERAGE))
