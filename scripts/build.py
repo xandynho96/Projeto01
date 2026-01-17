@@ -12,11 +12,11 @@ def build_executable():
     # Clean previous builds
     if os.path.exists('build'):
         shutil.rmtree('build')
-    if os.path.exists('dist_optimized'):
+    if os.path.exists('dist'):
         try:
-            shutil.rmtree('dist_optimized')
+            shutil.rmtree('dist')
         except:
-             print("Warning: Could not clean dist_optimized folder.")
+             print("Warning: Could not clean dist folder.")
 
     # PyInstaller arguments
     args = [
@@ -26,7 +26,7 @@ def build_executable():
         '--windowed',      # No console window
         '--clean',
         '--paths=%s' % os.getcwd(),
-        '--distpath=dist_optimized',
+        '--distpath=dist',
         
         # Hidden Imports (Crucial for pandas, sklearn, tensorflow, etc.)
         '--hidden-import=pandas',
@@ -71,7 +71,7 @@ def build_executable():
     PyInstaller.__main__.run(args)
     
     print("Build Complete.")
-    dist_dir = os.path.abspath('dist_optimized')
+    dist_dir = os.path.abspath('dist')
     print(f"Executable is located in: {dist_dir}")
     
     # Post-Build: Copy external resources to dist folder

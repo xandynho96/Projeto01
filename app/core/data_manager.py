@@ -458,7 +458,6 @@ class DataManager:
             return 0.0
         
         try:
-        try:
             balance = self.exchange.fetch_balance()
             
             # Select Free or Total
