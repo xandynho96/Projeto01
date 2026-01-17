@@ -495,10 +495,10 @@ class AIBrain:
         payload = {
             "model": "deepseek-chat",
             "messages": [
-                {"role": "system", "content": "You are a conservative risk manager algorithm. Output JSON only."},
+                {"role": "system", "content": "You are a Senior Risk Analyst & Scalping Expert. Analyze the trade deeply. Output JSON only."},
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 150,
+            "max_tokens": 300,
             "temperature": 0.3
         }
         

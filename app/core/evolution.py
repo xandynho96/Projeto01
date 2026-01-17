@@ -83,20 +83,41 @@ def ask_deepseek_for_strategy(market_summary):
     api_key = config.DEEPSEEK_API_KEY
     if not api_key: return None
     
+    # Time-based check (4 hours)
+    current_time = time.time()
+    if not hasattr(ask_deepseek_for_strategy, 'last_call'):
+        ask_deepseek_for_strategy.last_call = 0
+    
+    if (current_time - ask_deepseek_for_strategy.last_call) < 14400: # 4 Hours
+        return None
+        
+    ask_deepseek_for_strategy.last_call = current_time
+
     prompt = f"""
-    Atue como um Arquiteto de Estratégias Quant (Foco: SCALPING).
-    Contexto de Mercado (Crypto 1m Data):
+    Atue como um Consultor Sênior de Estratégias Quantitativas (HFT/Scalping).
+    
+    ANÁLISE DE MERCADO (Dados 1m):
     {market_summary}
     
-    Gere uma configuração JSON para um bot Scalper de RSI Mean Reversion.
-    Ranges permitidos (SCALPING RIGOROSO):
-    - sl_pct: 0.1 a 1.5 (Stop Curto)
-    - tp_pct: 0.2 a 3.0 (Alvo Rápido)
-    - rsi_buy: 15 a 45
-    - rsi_sell: 55 a 85
+    TAREFA:
+    Analise o comportamento atual do preço e volatilidade acima e projete uma estratégia de reversão à média (RSI + Bollinger) altamente precisa.
     
-    Objetivo: Maximizar Winrate (>60%) com entradas precisas.
-    Responda APENAS o JSON: {{ "sl_pct": float, "tp_pct": float, "rsi_buy": int, "rsi_sell": int }}
+    PARÂMETROS DA ESTRATÉGIA (JSON):
+    - sl_pct: Stop Loss dinâmico (0.2% a 1.5%). Se volatilidade alta, use stops mais largos. Se baixa, stops curtos.
+    - tp_pct: Take Profit (0.6% a 3.0%). Deve ser pelo menos 1.5x o Stop (Risco/Retorno positivo).
+    - rsi_buy: Limite de Sobrevenda (Ex: 25-40). Se tendência forte de baixa, seja conservador (<30).
+    - rsi_sell: Limite de Sobrecompra (Ex: 60-80).
+    
+    OBJETIVO:
+    Criar uma configuração que filtre ruído e capture apenas reversões claras com probabilidade > 65%.
+    
+    Responda EXCLUSIVAMENTE com o objeto JSON final, sem explicações:
+    {{ 
+        "sl_pct": float, 
+        "tp_pct": float, 
+        "rsi_buy": int, 
+        "rsi_sell": int 
+    }}
     """
     
     try:
@@ -106,7 +127,7 @@ def ask_deepseek_for_strategy(market_summary):
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7
         }
-        resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=10)
+        resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=15)
         if resp.status_code == 200:
             content = resp.json()['choices'][0]['message']['content']
             content = content.replace("```json", "").replace("```", "").strip()
@@ -319,13 +340,12 @@ def evolution_worker():
                  population = [Genome() for _ in range(POPULATION_SIZE)]
 
             
-            # 1. Ask DeepSeek for a Hypothesis (every 5 generations to save credits)
-            if generation % 5 == 1:
-                # Build Market Context
+            # 1. Ask DeepSeek for a Hypothesis (Time Controled inside function)
+            # Build Market Context
+            if generation % 10 == 0: # Light check frequency
                 last_row = bt.df.iloc[-1]
-                summary = f"RSI: {last_row['rsi']:.2f}, Trend: {'Bull' if last_row['close'] > last_row.get('ema_200', 0) else 'Bear'}"
-                print(f"🤖 Lab: Asking DeepSeek for strategy hypothesis ({summary})...")
-                new_params = ask_deepseek_for_strategy(summary)
+                summary = f"RSI: {last_row['rsi']:.2f}, Trnd: {'Bull' if last_row['close'] > last_row.get('ema_200', 0) else 'Bear'}"
+                new_params = ask_deepseek_for_strategy(summary) # Will return None if < 4 hours
                 if new_params:
                     print(f"🤖 DeepSeek Suggested: {new_params}")
                     population.append(Genome(new_params)) # Inject into population
@@ -340,10 +360,10 @@ def evolution_worker():
             # 3. Promotion Logic
             if best.winrate > 60 and best.trades > 15:
                 print(f"🏆 PROMOTING Strategy to REAL: WR {best.winrate:.1f}% | ROI {best.roi:.2f}% | Params: {best.params}")
-                dm.save_strategy(best, origin='lab_deepseek' if generation % 5 == 1 else 'lab_evo', status='active')
+                dm.save_strategy(best, origin='lab_deepseek' if generation % 50 == 1 else 'lab_evo', status='active')
             else:
                  if best.winrate > 50 and best.trades > 5:
-                      if generation % 5 == 0:
+                      if generation % 10 == 0:
                           print(f"🧪 Saving Lab Candidate: WR {best.winrate:.1f}% (Needs Improvement)")
                           dm.save_strategy(best, origin='lab_evo', status='lab')
     
@@ -360,10 +380,10 @@ def evolution_worker():
             if generation % 10 == 0:
                  cull_weak_strategies(bt, dm)
     
-            if generation % 5 == 0:
+            if generation % 10 == 0:
                  print(f"🧬 Gen {generation} Best: WR {best.winrate:.1f}% | Trades {best.trades}")
                  
-            time.sleep(1)
+            time.sleep(5)
 
 if __name__ == "__main__":
     try:
