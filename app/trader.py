@@ -394,6 +394,22 @@ class BitcoinTrader:
         
         # 6. Deepseek Validation (Optional)
         if signal != "NEUTRO":
+            # Fix: If AI is neutral (0% return), DeepSeek rejects it because Expected Return is 0.
+            # We must provide the TECHNICAL Target (ATR based) as the potential return.
+            if predicted_price is None or predicted_price == current_price:
+                 atr_val = df.iloc[-1].get('atr', 0)
+                 if atr_val > 0:
+                     # Calculate Implied Target based on same logic as Execution (3.0x ATR)
+                     vol_pct = atr_val / current_price
+                     tp_implied = vol_pct * 3.0
+                     
+                     if signal == "buy":
+                         predicted_price = current_price * (1 + tp_implied)
+                     else:
+                         predicted_price = current_price * (1 - tp_implied)
+                         
+                     self.logger.info(f"🔮 Alvo IA ajustado para Algo Técnico (ATR): {predicted_price:.2f} (Retorno Potencial: {tp_implied*100:.2f}%)")
+
             technical_summary = df.tail(1).to_dict('records')[0]
             deepseek_key = self.user_settings.get('deepseek_key')
             
