@@ -345,7 +345,9 @@ def evolution_worker():
             if generation % 10 == 0: # Light check frequency
                 last_row = bt.df.iloc[-1]
                 summary = f"RSI: {last_row['rsi']:.2f}, Trnd: {'Bull' if last_row['close'] > last_row.get('ema_200', 0) else 'Bear'}"
-                new_params = ask_deepseek_for_strategy(summary) # Will return None if < 4 hours
+                
+                # Check directly and silently
+                new_params = ask_deepseek_for_strategy(summary) 
                 if new_params:
                     print(f"🤖 DeepSeek Suggested: {new_params}")
                     population.append(Genome(new_params)) # Inject into population

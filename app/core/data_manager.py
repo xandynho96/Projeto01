@@ -458,29 +458,46 @@ class DataManager:
             return 0.0
         
         try:
+        try:
             balance = self.exchange.fetch_balance()
             
             # Select Free or Total
             bal_data = balance.get(type, {}) if type in balance else balance.get('total', {})
             
-            # Prioritize currency with actual balance
-            # Kraken Spot often uses ZUSD for USD
+            # 1. Standard CCXT (Spot/Margin)
             usd_bal = bal_data.get('USD', 0.0)
             zusd_bal = bal_data.get('ZUSD', 0.0)
             usdt_bal = bal_data.get('USDT', 0.0)
             
-            # Kraken Futures often uses 'PF_USD' or similar
-            pf_usd = bal_data.get('PF_USD', 0.0)
+            # 2. CCXT Unified (Futures often here)
+            # Check balance['USD']['free'] directly if not found above
+            if usd_bal == 0:
+                usd_bal = float(balance.get('USD', {}).get(type, 0.0))
+
+            # 3. Kraken Futures Specific Keys
+            pf_usd = bal_data.get('PF_USD', 0.0) 
             
-            # Sum all Stablecoins to get "Total USD Buying Power" (approx for Margin)
-            # If trading Spot, this might be misleading if pairs don't match, 
-            # but for Spot Margin, all these count as collateral.
-            final_bal = usd_bal + zusd_bal + usdt_bal + pf_usd
-                
+            # 4. Deep Inspection (Flex Wallet)
+            flex_usd = 0.0
+            if 'info' in balance:
+                try:
+                    if 'accounts' in balance['info']:
+                         accounts = balance['info']['accounts']
+                         if 'flex' in accounts:
+                             currencies = accounts['flex'].get('currencies', {})
+                             if 'USD' in currencies:
+                                 flex_usd = float(currencies['USD'].get('quantity', 0.0))
+                except: pass
+
+            # Sum all sources
+            final_bal = usd_bal + zusd_bal + usdt_bal + pf_usd + flex_usd
+                 
             return final_bal
             
         except Exception as e:
             print(f"Error fetching balance: {e}")
+            import traceback
+            traceback.print_exc()
             return 0.0
 
     def save_trade(self, symbol, side, amount, price, status='open'):

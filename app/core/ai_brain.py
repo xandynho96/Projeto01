@@ -415,16 +415,31 @@ class AIBrain:
         
         return predicted_return
 
-    def validate_signal_with_deepseek(self, current_price, predicted_price, technical_summary, market_context=None, api_key=None):
+    def validate_signal_with_deepseek(self, current_price, predicted_price, technical_summary, market_context=None, api_key=None, trading_mode="Spot"):
         """
         Uses DeepSeek LLM to validate the trade signal based on technical context.
         """
         if not api_key:
              return {"approved": True, "reason": "Sem chave API fornecida, aprovado automaticamente."}
              
+        # Determine Fees and Thresholds based on Mode
+        is_futures = "Futures" in trading_mode
+        
+        if is_futures:
+            # Kraken Futures: ~0.05% Taker + 0.05% SLipport + Funding ~ 0.1% total conservative
+            # Let's say 0.12% Roundtrip
+            FEES_PCT = 0.12
+            MIN_ROI = 0.15 # Just above fees
+            MODE_NAME = "FUTUROS (Taxas Baixas)"
+        else:
+            # Spot: 0.26% Taker * 2 = 0.52%
+            FEES_PCT = 0.52
+            MIN_ROI = 0.60
+            MODE_NAME = "SPOT (Taxas Altas)"
+
         # Construct Prompt
         signal_type = "COMPRA" if predicted_price > current_price else "VENDA"
-        expected_return = (predicted_price - current_price) / current_price * 100
+        expected_return = abs((predicted_price - current_price) / current_price * 100)
         
         # Prepare Context String
         ctx_str = ""
@@ -437,8 +452,9 @@ class AIBrain:
             """
         
         prompt = f"""
-        Você é um Trader Especialista em Scalping de Alta Alavancagem (50x). 
+        Você é um Trader Especialista em Scalping de Alta Alavancagem. 
         Analise esta oportunidade rápida de Bitcoin (1m Timeframe) considerando o contexto abaixo.
+        MODO DE OPERAÇÃO: {MODE_NAME}
         {ctx_str}
         
         Sinal IA: {signal_type}
@@ -464,26 +480,20 @@ class AIBrain:
         - Pivot Low Recente? {'SIM' if technical_summary.get('is_pivot_low', 0) else 'NAO'}
         - Distância Fib 50%: {technical_summary.get('fib_500', 0):.2f}%
         
-        Regras de Validação (SCALPING AGRESSIVO):
-        1. Respeite o REGIME de mercado:
-           - Se ALTA VOLATILIDADE: Aprove Trades mais agressivos se houver momentum.
-           - Se BAIXA VOLATILIDADE: Exija padrões claros ou squeezes.
-        2. Siga a TENDÊNCIA macro (EMA200) para aumentar winrate, mas permita contra-tendência CURTA (Reversão) se RSI estiver extremo (>80/<20).
-        3. Focar em capturar movimentos curtos (0.1% - 0.5%).
-        4. REJEITE se o contexto técnico contradizer fortemente o sinal (ex: Compra em Tendência de Baixa sem Oversold, ou Venda em Suporte Forte).
-        5. ANÁLISE DE RISCO (COM TAXAS):
-           - Taxas Kraken: ~0.26% entrada + 0.26% saída = 0.52% TOTAL.
-           - O Retorno Esperado DEVE ser maior que 0.6% para valer a pena.
-           - Se o Alvo for < 0.6%, REJEITE imediatamente (Prejuízo certo).
-        6. RISCO DE LIQUIDAÇÃO (50x):
-           - Stop Loss > 1.5% é INACEITÁVEL (75% de Drawdown).
-           - Priorize Stops técnicos curtos (0.2% - 0.8%).
-
+        Regras de Validação (SCALPING):
+        1. Respeite o REGIME de mercado.
+        2. Siga a TENDÊNCIA macro (EMA200), mas permita reversão se RSI extremo.
+        3. ANÁLISE DE RISCO ({MODE_NAME}):
+           - Taxas Estimadas: {FEES_PCT}%.
+           - O Retorno Esperado ({expected_return:.4f}%) DEVE SER MAIOR que {MIN_ROI}% para ser aprovado.
+           - Se Retorno < {MIN_ROI}%, REJEITE (Prejuízo certo com taxas).
+        4. RISCO DE LIQUIDAÇÃO:
+           - Stops técnicos devem ser coerentes.
         
         Responda APENAS JSON:
         {{
             "approved": true/false,
-            "reason": "Explicação curta focada no contexto e scalping"
+            "reason": "Explicação curta focada no contexto e taxas"
         }}
         """
         

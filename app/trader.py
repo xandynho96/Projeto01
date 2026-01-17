@@ -413,7 +413,8 @@ class BitcoinTrader:
                     predicted_price, 
                     technical_summary, 
                     market_context=market_context,
-                    api_key=deepseek_key
+                    api_key=deepseek_key,
+                    trading_mode=self.user_settings.get('trading_mode', 'Spot')
                 )
                 self.logger.info(f"DeepSeek: {validation['reason']}")
                 
