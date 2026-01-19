@@ -338,10 +338,12 @@ class BitcoinTrader:
 
             
             if signal == "NEUTRO":
-                 # self.logger.info("⌛ Análise: NEUTRO (Aguardando setup ideal...)") 
-                 # User wants to see activity, let's enable it but keep it clean
-                 if datetime.now().second < 5: # Log only once per minute approximately
-                     self.logger.info("⌛ Análise: NEUTRO (IA e Téc. aguardando oportunidade...)")
+                 # Log Heartbeat to reassure user the bot is watching market
+                 if datetime.now().second < 10: # Log once per minute (approx)
+                     trend_emoji = "📈" if close_price > row.get('ema_200', 0) else "📉"
+                     self.logger.info(f"👀 Monitorando: ${close_price:.2f} {trend_emoji} | RSI: {rsi:.1f} | Stoch: {stoch_k:.1f} | Var: {change_percent:.3f}%")
+                     if strategy_name != "NEUTRO":
+                         self.logger.info(f"   🤏 Quase lá: Setup '{strategy_name}' identificado, mas filtros bloquearam.")
                  return
 
         else:

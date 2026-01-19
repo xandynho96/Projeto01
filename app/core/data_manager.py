@@ -114,7 +114,13 @@ class DataManager:
                     self.exchange = ccxt.kraken(exchange_config)
             
             self.exchange.load_markets()
-            print(f"Connected to Kraken {'Futures' if is_futures else 'Spot'}.")
+            if "Spot" in trading_mode:
+                print(f"Connected to Kraken {'Futures' if is_futures else 'Spot'}.")
+            elif is_futures:
+                 # Only print explicitly for Futures if user wants confirmation, 
+                 # but based on "esse log de connect kraken spot n precisa mais exibir", 
+                 # we can keep Futures confirmation but ensure no Spot noise leaks.
+                 print("Connected to Kraken Futures.")
             return True
         except Exception as e:
             print(f"Failed to connect to Kraken: {e}")
