@@ -425,7 +425,15 @@ class BitcoinAIApp:
 
                 # --- LOG ROUTING LOGIC ---
                 is_evo = False
-                evo_keywords = ['🧬', '🤖', '🧪', 'PROMOTING', 'Gen ', 'Lab:', 'DeepSeek Suggested', 'Strategy Laboratory', 'Audit', 'DETECTED', 'Replaced', 'Saving Lab Candidate', 'Active Strategy Audit', 'demoting', 'lab_evo', 'Estratégia Evoluída', 'Best:', 'WR ', 'Trades ']
+                evo_keywords = [
+                    '🧬', '🤖', '🧪', 'PROMOTING', 'Gen ', 'Lab:', 'DeepSeek Suggested', 
+                    'Strategy Laboratory', 'Audit', 'DETECTED', 'Replaced', 
+                    'Saving Lab Candidate', 'Active Strategy Audit', 'demoting', 
+                    'lab_evo', 'Estratégia Evoluída', 'Best:', 'WR ', 'Trades ',
+                    # Added based on user feedback to clean up Main Log
+                    'DEMOTED', 'UNDERPERFORMANCE', 'REPLACEMENT', 'FOUND IN LAB', 
+                    'ACTIVE ->', 'ARCHIVED', 'STRATEGY ', 'NO REPLACEMENT'
+                ]
                 
                 # Check normalized message
                 clean_msg = msg.upper().replace('\r', '').replace('\n', '')
