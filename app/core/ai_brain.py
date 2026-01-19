@@ -429,12 +429,14 @@ class AIBrain:
             # Kraken Futures: ~0.05% Taker + 0.05% SLipport + Funding ~ 0.1% total conservative
             # Let's say 0.12% Roundtrip
             FEES_PCT = 0.12
-            MIN_ROI = 0.15 # Just above fees
-            MODE_NAME = "FUTUROS (Taxas Baixas)"
+            MIN_ROI = 0.15 # 0.15% Min Profit (acima das taxas)
+            MODE_NAME = "FUTUROS (Alavancado)"
         else:
-            # Spot: 0.26% Taker * 2 = 0.52%
+            # Spot: 0.26% Taker * 2 = 0.52% (Using BNB/Volume discounts might be lower)
+            # Relaxing requirement to allow SCALPING on Spot (capture 0.4% moves)
             FEES_PCT = 0.52
-            MIN_ROI = 0.60
+            MIN_ROI = 0.35 + FEES_PCT # At least cover fees + 0.35% profit (Total ~0.87%)
+            # NOTE: If we are strict, we miss many small moves. DeepSeek should judge VOLATILITY too.
             MODE_NAME = "SPOT (Taxas Altas)"
 
         # Construct Prompt
@@ -459,7 +461,20 @@ class AIBrain:
         
         Sinal IA: {signal_type}
         Preço Atual: {current_price}
-        Alvo Previsto: {predicted_price} (Retorno Esp.: {expected_return:.4f}%)
+        Alvo Técnico (Baseado em ATR): {predicted_price} (Retorno Potencial: {expected_return:.4f}%)
+        
+        CRITÉRIOS DE APROVAÇÃO:
+        1. VIABILIDADE: O Retorno Potencial ({expected_return:.4f}%) cobre as taxas ({FEES_PCT}%) e deixa lucro?
+           - Se Retorno < {FEES_PCT}%, REJEITE (Prejuízo matemático).
+           - Se Retorno > {FEES_PCT}% mas < {MIN_ROI}%, aprove APENAS se os indicadores forem MUITO fortes (Setup Perfeito).
+        
+        2. QUALIDADE TÉCNICA:
+           - RSI/StochRSI confirmam a direção? (Não compre se RSI > 70, Não venda se RSI < 30, exceto rompimento forte).
+           - O cenário favorece o trade? (Ex: Compra em Tendência de Alta ou Reversão clara).
+        
+        3. DECISÃO FINAL:
+           - Se o setup é bom e paga as taxas: APROVE (true).
+           - Se é arriscado, contra tendência ou paga pouco: REJEITE (false).
         
         Contexto Técnico:
         - RSI: {technical_summary.get('rsi', 50):.2f} (Neutro 40-60)
@@ -479,16 +494,6 @@ class AIBrain:
         - Pivot High Recente? {'SIM' if technical_summary.get('is_pivot_high', 0) else 'NAO'}
         - Pivot Low Recente? {'SIM' if technical_summary.get('is_pivot_low', 0) else 'NAO'}
         - Distância Fib 50%: {technical_summary.get('fib_500', 0):.2f}%
-        
-        Regras de Validação (SCALPING):
-        1. Respeite o REGIME de mercado.
-        2. Siga a TENDÊNCIA macro (EMA200), mas permita reversão se RSI extremo.
-        3. ANÁLISE DE RISCO ({MODE_NAME}):
-           - Taxas Estimadas: {FEES_PCT}%.
-           - O Retorno Esperado ({expected_return:.4f}%) DEVE SER MAIOR que {MIN_ROI}% para ser aprovado.
-           - Se Retorno < {MIN_ROI}%, REJEITE (Prejuízo certo com taxas).
-        4. RISCO DE LIQUIDAÇÃO:
-           - Stops técnicos devem ser coerentes.
         
         Responda APENAS JSON:
         {{

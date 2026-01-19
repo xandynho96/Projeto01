@@ -134,12 +134,31 @@ class DataManager:
                 print("Exchange not connected.")
                 return pd.DataFrame()
 
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit, since=since)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            if not df.empty:
-                 self.save_data(df, symbol, timeframe)
-            return df
+            # Retry logic for data fetching
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit, since=since)
+                    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                    if not df.empty:
+                        self.save_data(df, symbol, timeframe)
+                    return df
+                except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
+                     if attempt < max_retries - 1:
+                         time.sleep(2)
+                         continue
+                     print(f"⚠️ Network error fetching data ({timeframe}): {e}")
+                     return pd.DataFrame()
+                except Exception as e:
+                     if "socket" in str(e) or "NameResolutionError" in str(e):
+                         if attempt < max_retries - 1:
+                             time.sleep(2)
+                             continue
+                         print(f"⚠️ Connection lost fetching data ({timeframe}).")
+                         return pd.DataFrame()
+                     raise e
+
         except Exception as e:
             print(f"Error fetching data: {e}")
             if self.exchange and "does not have market symbol" in str(e):
@@ -175,7 +194,7 @@ class DataManager:
             ta_5m = TechnicalAnalysis(df_5m)
             df_5m = ta_5m.add_all_indicators()
             # Select relevant columns and rename
-            cols_to_keep = ['timestamp', 'rsi', 'macd', 'bb_width', 'ema_200', 'supertrend']
+            cols_to_keep = ['timestamp', 'rsi', 'macd', 'bb_width', 'ema_200', 'supertrend', 'stoch_k', 'stoch_rsi_k']
             df_5m = df_5m[cols_to_keep].copy()
             df_5m.columns = ['timestamp'] + [f"{c}_5m" for c in cols_to_keep if c != 'timestamp']
         
@@ -183,7 +202,7 @@ class DataManager:
         if not df_15m.empty:
             ta_15m = TechnicalAnalysis(df_15m)
             df_15m = ta_15m.add_all_indicators()
-            cols_to_keep = ['timestamp', 'rsi', 'macd', 'bb_width', 'ema_200', 'supertrend']
+            cols_to_keep = ['timestamp', 'rsi', 'macd', 'bb_width', 'ema_200', 'supertrend', 'stoch_k', 'stoch_rsi_k']
             df_15m = df_15m[cols_to_keep].copy()
             df_15m.columns = ['timestamp'] + [f"{c}_15m" for c in cols_to_keep if c != 'timestamp']
 
@@ -457,47 +476,73 @@ class DataManager:
         if not self.exchange or not self.exchange.apiKey:
             return 0.0
         
-        try:
-            balance = self.exchange.fetch_balance()
-            
-            # Select Free or Total
-            bal_data = balance.get(type, {}) if type in balance else balance.get('total', {})
-            
-            # 1. Standard CCXT (Spot/Margin)
-            usd_bal = bal_data.get('USD', 0.0)
-            zusd_bal = bal_data.get('ZUSD', 0.0)
-            usdt_bal = bal_data.get('USDT', 0.0)
-            
-            # 2. CCXT Unified (Futures often here)
-            # Check balance['USD']['free'] directly if not found above
-            if usd_bal == 0:
-                usd_bal = float(balance.get('USD', {}).get(type, 0.0))
+        # Retry logic for network flakiness
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                balance = self.exchange.fetch_balance()
+                
+                # Select Free or Total
+                bal_data = balance.get(type, {}) if type in balance else balance.get('total', {})
+                
+                # 1. Standard CCXT (Spot/Margin)
+                usd_bal = bal_data.get('USD', 0.0)
+                zusd_bal = bal_data.get('ZUSD', 0.0)
+                usdt_bal = bal_data.get('USDT', 0.0)
+                usdt_b_bal = bal_data.get('USDT.B', 0.0) # Bridged Tether
+                usdt_m_bal = bal_data.get('USDT.M', 0.0) # Margin Tether?
+                
+                # 2. CCXT Unified (Futures often here)
+                # Check balance['USD']['free'] directly if not found above
+                if usd_bal == 0:
+                    usd_bal = float(balance.get('USD', {}).get(type, 0.0))
 
-            # 3. Kraken Futures Specific Keys
-            pf_usd = bal_data.get('PF_USD', 0.0) 
-            
-            # 4. Deep Inspection (Flex Wallet)
-            flex_usd = 0.0
-            if 'info' in balance:
-                try:
-                    if 'accounts' in balance['info']:
-                         accounts = balance['info']['accounts']
-                         if 'flex' in accounts:
-                             currencies = accounts['flex'].get('currencies', {})
-                             if 'USD' in currencies:
-                                 flex_usd = float(currencies['USD'].get('quantity', 0.0))
-                except: pass
+                # 3. Kraken Futures Specific Keys
+                pf_usd = bal_data.get('PF_USD', 0.0)
+                pf_xbt = bal_data.get('PF_XBTUSD', 0.0) # Sometimes XBT balance shows as equity
+                
+                # 4. Deep Inspection (Flex Wallet)
+                flex_usd = 0.0
+                if 'info' in balance:
+                    try:
+                        if 'accounts' in balance['info']:
+                             accounts = balance['info']['accounts']
+                             if 'flex' in accounts:
+                                 currencies = accounts['flex'].get('currencies', {})
+                                 if 'USD' in currencies:
+                                     flex_usd = float(currencies['USD'].get('quantity', 0.0))
+                    except: pass
 
-            # Sum all sources
-            final_bal = usd_bal + zusd_bal + usdt_bal + pf_usd + flex_usd
-                 
-            return final_bal
-            
-        except Exception as e:
-            print(f"Error fetching balance: {e}")
-            import traceback
-            traceback.print_exc()
-            return 0.0
+                # Sum all sources
+                # FIX: Flex USD often mirrors USD balance. Only add if distinct or if main USD is 0.
+                if usd_bal > 0 and flex_usd > 0 and abs(usd_bal - flex_usd) < 0.01:
+                    # Likely same balance reported twice
+                    final_bal = usd_bal + zusd_bal + usdt_bal + usdt_b_bal + usdt_m_bal + pf_usd
+                else:
+                    final_bal = usd_bal + zusd_bal + usdt_bal + usdt_b_bal + usdt_m_bal + pf_usd + flex_usd
+                
+                return final_bal
+                
+            except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 * (attempt + 1)) # Backoff: 2s, 4s, ...
+                    continue
+                print(f"⚠️ Network error fetching balance: {e}")
+                return 0.0
+            except Exception as e:
+                # Filter out verbose socket/SSL errors from user view, just log strict warning
+                if "socket" in str(e) or "NameResolutionError" in str(e):
+                     if attempt < max_retries - 1:
+                         time.sleep(2)
+                         continue
+                     print("⚠️ Connection lost while checking balance (DNS/Network).")
+                     return 0.0
+                
+                print(f"Error fetching balance: {e}")
+                # import traceback
+                # traceback.print_exc()
+                return 0.0
+        return 0.0
 
     def save_trade(self, symbol, side, amount, price, status='open'):
         """Saves a trade to the database."""

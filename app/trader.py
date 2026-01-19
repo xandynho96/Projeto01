@@ -341,6 +341,11 @@ class BitcoinTrader:
             bb_low = row['bb_low']
             bb_high = row['bb_high']
             close_price = row['close']
+            
+            # --- M5 CONFLUENCE INDICATORS ---
+            rsi_5m = row.get('rsi_5m', 50)
+            stoch_k_5m = row.get('stoch_k_5m', 50)
+            stoch_rsi_k_5m = row.get('stoch_rsi_k_5m', 0.5)
 
             change_percent = predicted_return * 100
             
@@ -383,6 +388,25 @@ class BitcoinTrader:
                         signal = "sell"
                         strategy_name = "Hybrid Scalper (Overbought)"
                 
+            # --- M5 VALIDATION FILTER (MULTI-TIMEFRAME) ---
+            # Avoid buying if M5 is already Overbought (Stoch > 80 or RSI > 70)
+            # Avoid selling if M5 is already Oversold (Stoch < 20 or RSI < 30)
+            if signal == "buy":
+                if stoch_k_5m > 80 or rsi_5m > 70:
+                    self.logger.info(f"⏳ Filtro M5: Compra bloqueada por M5 Sobrecomprado (Stoch5m={stoch_k_5m:.1f}, RSI5m={rsi_5m:.1f})")
+                    signal = "NEUTRO"
+                elif stoch_rsi_k_5m > 0.8:
+                     self.logger.info(f"⏳ Filtro M5: Compra bloqueada por StochRSI M5 Topo ({stoch_rsi_k_5m:.2f})")
+                     signal = "NEUTRO"
+
+            elif signal == "sell":
+                if stoch_k_5m < 20 or rsi_5m < 30:
+                    self.logger.info(f"⏳ Filtro M5: Venda bloqueada por M5 Sobrevendido (Stoch5m={stoch_k_5m:.1f}, RSI5m={rsi_5m:.1f})")
+                    signal = "NEUTRO"
+                elif stoch_rsi_k_5m < 0.2:
+                     self.logger.info(f"⏳ Filtro M5: Venda bloqueada por StochRSI M5 Fundo ({stoch_rsi_k_5m:.2f})")
+                     signal = "NEUTRO"
+
             if signal != "NEUTRO":
                      # Ensure strategy_name exists if we got here via Fallback 
                      if 'strategy_name' not in locals(): strategy_name = "Hybrid/Unknown"
@@ -394,9 +418,10 @@ class BitcoinTrader:
         
         # 6. Deepseek Validation (Optional)
         if signal != "NEUTRO":
-            # Fix: If AI is neutral (0% return), DeepSeek rejects it because Expected Return is 0.
-            # We must provide the TECHNICAL Target (ATR based) as the potential return.
-            if predicted_price is None or predicted_price == current_price:
+            # Se DeepSeek estiver ativo E a IA (Brain) foi conservadora (previu neutro),
+            # mas os Indicadores Técnicos encontraram uma entrada (Fallback/Híbrido),
+            # precisamos fornecer um "Alvo Simulado" baseado no ATR para que o DeepSeek possa validar o Risk/Reward.
+            if predicted_price is None or predicted_price == current_price or abs(predicted_price - current_price)/current_price < 0.001:
                  atr_val = df.iloc[-1].get('atr', 0)
                  if atr_val > 0:
                      # Calculate Implied Target based on same logic as Execution (3.0x ATR)

@@ -19,10 +19,10 @@ CROSSOVER_RATE = 0.7
 # --- PARAMETER RANGES ---
 # --- PARAMETER RANGES (SCALPING FOCUSED) ---
 PARAM_RANGES = {
-    'sl_pct': (0.2, 1.0),      # SL: 0.2% (10% Risk) to 1.0% (50% Risk at 50x Lev)
-    'tp_pct': (0.6, 3.0),      # TP: Min 0.6% (Covers Fees) up to 3% (150% ROE)
-    'rsi_buy': (15, 45),       
-    'rsi_sell': (55, 85),      
+    'sl_pct': (0.1, 0.8),      # SL: 0.1% a 0.8% (Ajustado para Scalping Rápido)
+    'tp_pct': (0.15, 1.5),     # TP: 0.15% a 1.5% (Captura movimentos menores do 1m)
+    'rsi_buy': (15, 55),       
+    'rsi_sell': (45, 85),      
     # 'rsi_period': (10, 20),
 }
 # ...
@@ -103,10 +103,10 @@ def ask_deepseek_for_strategy(market_summary):
     Analise o comportamento atual do preço e volatilidade acima e projete uma estratégia de reversão à média (RSI + Bollinger) altamente precisa.
     
     PARÂMETROS DA ESTRATÉGIA (JSON):
-    - sl_pct: Stop Loss dinâmico (0.2% a 1.5%). Se volatilidade alta, use stops mais largos. Se baixa, stops curtos.
-    - tp_pct: Take Profit (0.6% a 3.0%). Deve ser pelo menos 1.5x o Stop (Risco/Retorno positivo).
-    - rsi_buy: Limite de Sobrevenda (Ex: 25-40). Se tendência forte de baixa, seja conservador (<30).
-    - rsi_sell: Limite de Sobrecompra (Ex: 60-80).
+    - sl_pct: Stop Loss dinâmico (0.1% a 0.8%). Scalping rápido requer stops curtos.
+    - tp_pct: Take Profit (0.15% a 1.5%). Deve ser > Fees (0.12%).
+    - rsi_buy: Limite de Sobrevenda (Ex: 20-55).
+    - rsi_sell: Limite de Sobrecompra (Ex: 45-80).
     
     OBJETIVO:
     Criar uma configuração que filtre ruído e capture apenas reversões claras com probabilidade > 65%.
@@ -177,8 +177,9 @@ def evaluate_fitness(genome, bt):
 
     genome.winrate = (wins / total_trades) * 100
     genome.trades = total_trades
-    # Kraken Taker Fee: ~0.26% per side => 0.52% Roundtrip
-    COMMISSION = 0.0052 
+    # Kraken Futures Taker Fee: ~0.05% per side => ~0.1% Roundtrip. 
+    # Usamos 0.12% para ser conservador e cobrir slippage.
+    COMMISSION = 0.0012 
     
     # Net Profit = (Wins * (TP - Comm)) - (Losses * (SL + Comm))
     net_primary = wins * (tp_pct - COMMISSION)
