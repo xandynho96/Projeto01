@@ -271,12 +271,13 @@ class BitcoinTrader:
         time_since_last_train = (datetime.now() - self.last_training_time).total_seconds()
         
         if time_since_last_train > 900:
-            self.logger.info("🧠 CÉREBRO: Absorvendo novos dados de mercado (Retreinamento)...")
+            self.logger.info("🧠 CÉREBRO: Absorvendo novos dados de mercado (Retreinamento em Background)...")
             try:
-                # Use Deep Memory Training instead of just current DF
-                self.train_on_historical_memory(limit=5000)
+                # Use Thread to avoid blocking main loop
+                train_thread = threading.Thread(target=self.train_on_historical_memory, args=(5000,), daemon=True)
+                train_thread.start()
             except Exception as e:
-                self.logger.error(f"Falha ao atualizar modelo IA: {e}")
+                self.logger.error(f"Falha ao iniciar retreinamento IA: {e}")
         else:
             # self.logger.info(f"🧠 CÉREBRO: Utilizando conhecimento atual (Próx. treino em {900 - time_since_last_train:.0f}s)")
             pass
@@ -288,8 +289,19 @@ class BitcoinTrader:
         predicted_return = self.brain.get_prediction(df)
         predicted_price = current_price * (1 + predicted_return)
         
+        # Define row globally
+        row = df.iloc[-1]
+        
+        # --- M5 CONFLUENCE INDICATORS (Global Def) ---
+        rsi_5m = row.get('rsi_5m', 50)
+        stoch_k_5m = row.get('stoch_k_5m', 50)
+        stoch_rsi_k_5m = row.get('stoch_rsi_k_5m', 0.5)
+
+        # Calculate change_percent globally
+        change_percent = predicted_return * 100
+
         if (predicted_return == 0.0 and predicted_price == current_price):
-             predicted_price = None
+            predicted_price = None
 
         if predicted_price is None:
             # self.logger.warning("IA incerta. Ativando Protocolo de Segurança (Fallback).")
@@ -303,7 +315,7 @@ class BitcoinTrader:
             # --- ADVANCED SCALPING STRATEGY (Confluence) ---
             # Requires: RSI + StochRSI + BB to agree.
             
-            row = df.iloc[-1]
+            # row is already defined
             rsi = row.get('rsi', 50)
             stoch_k = row.get('stoch_k', 50)
             stoch_rsi_k = row.get('stoch_rsi_k', 0.5)
@@ -319,8 +331,6 @@ class BitcoinTrader:
             
             signal = "NEUTRO"
             strategy_name = "NEUTRO" # Initialize default to avoid unbound error
-
-            # BUY CONDITION: RSI Low AND Stoch Low AND Price near/below BB Low
 
             # BUY CONDITION: RSI Low AND Stoch Low AND Price near/below BB Low
             if rsi < RSI_BUY and stoch_k < STOCH_BUY:
@@ -339,7 +349,11 @@ class BitcoinTrader:
             
             if signal == "NEUTRO":
                  # Log Heartbeat to reassure user the bot is watching market
-                 if datetime.now().second < 10: # Log once per minute (approx)
+                 # Throttled 60s
+                 if not hasattr(self, 'last_heartbeat'): self.last_heartbeat = 0
+                 
+                 if (time.time() - self.last_heartbeat) > 60:
+                     self.last_heartbeat = time.time()
                      trend_emoji = "📈" if close_price > row.get('ema_200', 0) else "📉"
                      self.logger.info(f"👀 Monitorando: ${close_price:.2f} {trend_emoji} | RSI: {rsi:.1f} | Stoch: {stoch_k:.1f} | Var: {change_percent:.3f}%")
                      if strategy_name != "NEUTRO":
@@ -362,7 +376,7 @@ class BitcoinTrader:
             stoch_k_5m = row.get('stoch_k_5m', 50)
             stoch_rsi_k_5m = row.get('stoch_rsi_k_5m', 0.5)
 
-            change_percent = predicted_return * 100
+            # change_percent already calculated above
             
             # Spot Fees are ~0.26% Taker.
             # LOWERING threshold to 0.02% to be more aggressive availability for scalping
@@ -648,5 +662,25 @@ class BitcoinTrader:
             time.sleep(1)
 
 if __name__ == "__main__":
-    bot = BitcoinTrader()
+    import os
+    import json
+    
+    # Load Config for Standalone Run
+    config_path = os.path.join("config", "user_config_roe.json")
+    api_key = None
+    secret = None
+    settings = {}
+    
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                data = json.load(f)
+                api_key = data.get("api_key")
+                secret = data.get("secret")
+                settings = data
+                print("✅ Configuração carregada de arquivo local.")
+        except Exception as e:
+            print(f"❌ Erro ao ler config: {e}")
+            
+    bot = BitcoinTrader(api_key=api_key, secret=secret, user_settings=settings)
     bot.run()

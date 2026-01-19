@@ -79,7 +79,7 @@ class AIBrain:
 
         # TURBO MODE: Optimized for Speed/Performance Balance
         # 200 Trees is enough for convergence. n_jobs=-1 uses all cores. max_depth=25 prevents bloat.
-        return RandomForestRegressor(n_estimators=200, n_jobs=-1, max_depth=25, random_state=42)
+        return RandomForestRegressor(n_estimators=200, n_jobs=1, max_depth=25, random_state=42)
 
     def _load_or_create_model_tf(self):
         if not HAS_TENSORFLOW: return None
@@ -208,35 +208,113 @@ class AIBrain:
             print("Not enough data to train.")
             return
 
-        print("Preparing data for training...")
-        X, y = self.prepare_data(df)
-        
-        if not HAS_TENSORFLOW:
-            X = X.reshape(X.shape[0], -1)
-            
-        print(f"Training AI model ({'TensorFlow' if HAS_TENSORFLOW else 'RandomForest High-Res'})...")
-        
-        if HAS_TENSORFLOW:
-            if self.model is None: self.build_model((X.shape[1], X.shape[2]))
-            self.model.fit(X, y, epochs=10, batch_size=32, verbose=0) # Increased epochs
-            self.model.save(self.model_path)
-        else:
-            if self.model is None:
-                print("⚠️ Model was None. Re-initializing new RandomForest (TURBO)...")
-                from sklearn.ensemble import RandomForestRegressor
-                self.model = RandomForestRegressor(n_estimators=200, n_jobs=-1, max_depth=25, random_state=42)
+        if getattr(self, 'is_training_in_progress', False):
+             print("⚠️ Training already in progress. Skipping request.")
+             return
 
-            print(f"DEBUG: Input Shape {X.shape}. Starting Fit...")
-            # Automatically handles new shape by refitting
-            self.model.fit(X, y)
-
-            print("DEBUG: Fit Complete. Saving model...")
+        import threading
+        
+        def _train_worker(df_in):
+            self.is_training_in_progress = True
             try:
-                joblib.dump(self.model, self.model_path)
-                joblib.dump(self.scaler, self.scaler_path)
-                print(f"Model saved to {self.model_path}")
+                print("Preparing data for training...")
+                # Use a fresh instance or lock if needed, but separate DF copy is safe
+                X, y = self.prepare_data(df_in)
+                
+                if not HAS_TENSORFLOW:
+                    X = X.reshape(X.shape[0], -1)
+                
+                print(f"Training AI model ({'TensorFlow' if HAS_TENSORFLOW else 'RandomForest High-Res'})...")
+                
+                if HAS_TENSORFLOW:
+                    # TF threading issues exist, but let's try or skip
+                    if self.model is None: self.build_model((X.shape[1], X.shape[2]))
+                    self.model.fit(X, y, epochs=10, batch_size=32, verbose=0)
+                    self.model.save(self.model_path)
+                else:
+                    print("Training new Scaler/Model pair (Thread-Safe)...")
+
+                    # --- Feature Prep (Thread Local) ---
+                    df_train = df_in.copy()
+                    df_train['returns'] = df_train['close'].pct_change()
+                    
+                    # Add dynamic features
+                    if 'ema_trend' not in df_train.columns and 'ema_200' in df_train.columns:
+                        df_train['ema_trend'] = (df_train['close'] - df_train['ema_200']) / df_train['ema_200']
+                    elif 'ema_trend' not in df_train.columns: df_train['ema_trend'] = 0
+
+                    if 'volatility_change' not in df_train.columns:
+                        df_train['volatility_change'] = df_train['bb_width'].pct_change().fillna(0)
+                    
+                    # Pattern Score
+                    if 'pattern_score' not in df_train.columns:
+                        bullish = ['pattern_bullish_engulfing', 'pattern_hammer', 'pattern_marubozu']
+                        bearish = ['pattern_bearish_engulfing', 'pattern_shooting_star']
+                        score = pd.Series(0, index=df_train.index)
+                        for p in bullish: 
+                            if p in df_train.columns: score += df_train[p]
+                        for p in bearish: 
+                            if p in df_train.columns: score -= df_train[p]
+                        df_train['pattern_score'] = score
+                    
+                    if 'dist_support' not in df_train.columns: df_train['dist_support'] = 0
+                    if 'dist_resistance' not in df_train.columns: df_train['dist_resistance'] = 0
+                    for col in ['stoch_rsi_k', 'atr', 'obv_slope']:
+                        if col not in df_train.columns: df_train[col] = 0
+
+                    df_train.replace([np.inf, -np.inf], 0, inplace=True)
+                    df_train.fillna(0, inplace=True)
+
+                    features = self._get_feature_list(df_train)
+                    for f in features:
+                        if f not in df_train.columns: df_train[f] = 0
+                    
+                    data = df_train[features].values
+                    
+                    # 1. Train Scaler on new data
+                    new_scaler = MinMaxScaler(feature_range=(0, 1))
+                    new_scaler.fit(data) 
+                    
+                    # Re-transform data with new scaler for the model
+                    scaled_data = new_scaler.transform(data)
+                    X_new, y_new = [], []
+                    for i in range(self.sequence_length, len(scaled_data)):
+                        X_new.append(scaled_data[i-self.sequence_length:i])
+                        y_new.append(scaled_data[i, 0])
+                    
+                    X_new, y_new = np.array(X_new), np.array(y_new)
+                    X_new = X_new.reshape(X_new.shape[0], -1)
+
+                    # 2. Train New Model
+                    from sklearn.ensemble import RandomForestRegressor
+                    # Use n_jobs=1 for background stability
+                    new_model = RandomForestRegressor(n_estimators=200, n_jobs=1, max_depth=25, random_state=42)
+                    
+                    print(f"DEBUG: Input Shape {X_new.shape}. Starting Fit (Background)...")
+                    new_model.fit(X_new, y_new)
+
+                    print("DEBUG: Fit Complete. Swapping models...")
+                    
+                    # 3. Atomic Swap
+                    self.model = new_model
+                    self.scaler = new_scaler
+
+                    try:
+                        joblib.dump(self.model, self.model_path)
+                        joblib.dump(self.scaler, self.scaler_path)
+                        print(f"Model saved to {self.model_path}")
+                    except Exception as e:
+                        print(f"WARNING: Could not save model (File locked?): {e}")
+            
             except Exception as e:
-                print(f"WARNING: Could not save model (File locked?): {e}")
+                print(f"❌ Error in Training Thread: {e}")
+            finally:
+                self.is_training_in_progress = False
+        
+        # Start Thread
+        t = threading.Thread(target=_train_worker, args=(df.copy(),), daemon=True)
+        t.start()
+        print("🚀 Training started in background thread.")
 
     def predict_batch(self, df):
         """

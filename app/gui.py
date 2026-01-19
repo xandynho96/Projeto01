@@ -57,7 +57,7 @@ class BitcoinAIApp:
     def __init__(self, root):
         self.root = root
         self.root.title("BitcoinAI Trader - Kraken Edition")
-        self.root.geometry("1100x700")
+        self.root.geometry("1100x900")
         
         # Initialize Variables FIRST
         self.initialize_variables()

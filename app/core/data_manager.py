@@ -72,12 +72,14 @@ class DataManager:
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         
-        if config.KRAKEN_API_KEY:
-            self.connect_exchange(config.KRAKEN_API_KEY, config.KRAKEN_SECRET)
+        # REMOVED AUTO CONNECT IN INIT to prevent Spot default.
+        # Callers (Trader, Evolution) must call connect_exchange explicitly.
+        # if config.KRAKEN_API_KEY:
+        #     self.connect_exchange(config.KRAKEN_API_KEY, config.KRAKEN_SECRET)
             
         self.leverage = config.LEVERAGE # Default leverage
 
-    def connect_exchange(self, api_key, secret, demo_mode=False, trading_mode="Spot Margin"):
+    def connect_exchange(self, api_key, secret, demo_mode=False, trading_mode="Futures (50x)"):
         """
         Connects to Kraken Spot or Futures based on trading_mode.
         trading_mode: "Spot Margin (10x)" or "Futures (50x)"

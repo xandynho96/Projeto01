@@ -385,10 +385,10 @@ def evolution_worker():
                 new_pop.append(child)
             population = new_pop
             
-            if generation % 10 == 0:
+            if generation % 100 == 0:
                  cull_weak_strategies(bt, dm)
     
-            if generation % 10 == 0:
+            if generation % 50 == 0:
                  print(f"[EVO] 🧬 Gen {generation} Best: WR {best.winrate:.1f}% | Trades {best.trades}")
                  
             time.sleep(5)
