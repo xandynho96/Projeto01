@@ -695,7 +695,12 @@ class DataManager:
             return pnl
             
         except Exception as e:
-            print(f"Error fetching API PnL: {e}")
+            error_msg = str(e)
+            if "Invalid key" in error_msg or "permission" in error_msg.lower():
+                # Suppress spam for key permission errors
+                pass
+            else:
+                print(f"Error fetching API PnL: {e}")
             return self.get_24h_pnl() # Fallback
 
     def save_strategy(self, genome, origin='evolution', regime='ANY', status='lab'):
