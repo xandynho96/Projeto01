@@ -30,6 +30,19 @@ class BitcoinTrader:
                 
             self.logger.info(f"Modo: {trading_mode} | Símbolo: {config.SYMBOL}")
             
+            # Enforce Futures Mode Check as per User Request
+            if "Futures" not in trading_mode and not demo_mode:
+                 # Strict rule: "A IA so deve operar mercado futro"
+                 self.logger.error("❌ ERRO CRÍTICO: O Bot está configurado para operar fora de Futures.")
+                 self.logger.error("   Regra do Usuário: A IA só deve operar Mercado Futuro.")
+                 self.logger.error("   Ajuste 'trading_mode' no user_config.json para 'Futures'.")
+                 import sys
+                 sys.exit(1)
+             
+            # Mapping symbol if Futures
+            if "Futures" in trading_mode and config.SYMBOL == "BTC/USD":
+                 config.SYMBOL = "BTC/USD:USD" # Linear default
+
             self.dm.connect_exchange(api_key, secret, demo_mode=demo_mode, trading_mode=trading_mode)
             
         self.user_settings = user_settings
