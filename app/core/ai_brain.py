@@ -77,9 +77,9 @@ class AIBrain:
              except:
                 pass
 
-        print("Initializing new AI model (RandomForest - TURBO MODE)...")
-        # TURBO MODE: 1000 Trees, No Depth Limit (High learning capacity)
-        return RandomForestRegressor(n_estimators=1000, n_jobs=1, max_depth=None, random_state=42)
+        # TURBO MODE: Optimized for Speed/Performance Balance
+        # 200 Trees is enough for convergence. n_jobs=-1 uses all cores. max_depth=25 prevents bloat.
+        return RandomForestRegressor(n_estimators=200, n_jobs=-1, max_depth=25, random_state=42)
 
     def _load_or_create_model_tf(self):
         if not HAS_TENSORFLOW: return None
@@ -224,7 +224,7 @@ class AIBrain:
             if self.model is None:
                 print("⚠️ Model was None. Re-initializing new RandomForest (TURBO)...")
                 from sklearn.ensemble import RandomForestRegressor
-                self.model = RandomForestRegressor(n_estimators=1000, n_jobs=1, max_depth=None, random_state=42)
+                self.model = RandomForestRegressor(n_estimators=200, n_jobs=-1, max_depth=25, random_state=42)
 
             print(f"DEBUG: Input Shape {X.shape}. Starting Fit...")
             # Automatically handles new shape by refitting
