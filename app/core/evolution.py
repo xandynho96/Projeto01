@@ -201,7 +201,7 @@ def cull_weak_strategies(bt, dm):
     active_strats = dm.get_active_strategies()
     if not active_strats: return
 
-    print(f"🕵️ Active Strategy Audit ({len(active_strats)} active)...")
+    print(f"[EVO] 🕵️ Active Strategy Audit ({len(active_strats)} active)...")
     
     for s_data in active_strats:
         # Reconstruct Genome to evaluate
@@ -217,16 +217,16 @@ def cull_weak_strategies(bt, dm):
              # Criteria to Demote
              # Winrate < 40% AND Trades > 5
              if genome.trades >= 5 and genome.winrate < 40.0:
-                 print(f"📉 DETECTED UNDERPERFORMANCE: ID {s_data['id']} (WR {genome.winrate:.1f}%). Demoting...")
+                 print(f"[EVO] 📉 DETECTED UNDERPERFORMANCE: ID {s_data['id']} (WR {genome.winrate:.1f}%). Demoting...")
                  dm.demote_strategy(s_data['id'], reason=f"Low Winrate {genome.winrate:.1f}% in Audit")
                  
                  # Try to Replace
                  replacement = dm.get_best_lab_strategy()
                  if replacement:
                      dm.promote_strategy(replacement['id'])
-                     print(f"♻️ Replaced with Lab Candidate ID {replacement['id']}")
+                     print(f"[EVO] ♻️ Replaced with Lab Candidate ID {replacement['id']}")
                  else:
-                     print("⚠️ No replacement found in Lab.")
+                     print("[EVO] ⚠️ No replacement found in Lab.")
                      
              elif genome.trades < 5:
                   pass # Not enough sample size in this window
@@ -298,14 +298,21 @@ def evolution_worker():
             continue
 
         population = [Genome() for _ in range(POPULATION_SIZE)]
-        dm = DataManager()
+        # Initialize DM for Evolution - avoiding Spot Connection noise
+        # We don't strictly need a live exchange connection for backtesting on DB data
+        # but 'save_strategy' needs DB access.
+        dm = DataManager() 
+        # Note: DM connects to exchange on init if keys exist. 
+        # We can't easily prevent it without changing DM signature. 
+        # However, we can just rely on our Log Tagging now.
+        
         generation = 0
         
         # Inner Optimization Loop
         while True:
             # Check Time Limit
             if time.time() - start_time > MAX_DURATION:
-                print("⏰ Cycle Duration Reached. Saving State & Restarting...")
+                print("[EVO] ⏰ Cycle Duration Reached. Saving State & Restarting...")
                 try:
                     state = {'last_run': time.time()}
                     # Ensure data dir exists
@@ -315,7 +322,7 @@ def evolution_worker():
                     with open(STATE_FILE, 'w') as f:
                         json.dump(state, f)
                 except Exception as e:
-                    print(f"Error saving state: {e}")
+                    print(f"[EVO] Error saving state: {e}")
                 break # Break inner loop, go back to cooldown check
 
             generation += 1
@@ -323,21 +330,19 @@ def evolution_worker():
             # --- IMPROVEMENT: Live Data Refresh & Stagnation Check ---
             # 1. Refresh Data every 50 gens to keep Lab "Live"
             if generation % 50 == 0:
-                print("🔄 Lab: Refreshing market data for simulation...")
+                print("[EVO] 🔄 Lab: Refreshing market data for simulation...")
                 bt.load_data(limit=2000)
 
             # 2. Check Stagnation (If best WR is 0% for too long)
             # We check the previous generation's best (stored in 'best' variable from prev loop)
             # Initialize 'best' before loop to avoid NameError on first run if needed, but 'best' is defined at end of loop.
             # actually we check at the END of loop or start of next. Let's do it here assuming 'best' exists from gen > 1
-            # 2. Check Stagnation (If best WR is 0% for too long)
-            # (Logic merged into the simpler check below)
             pass 
 
             # Simpler Stagnation Logic:
             # If we are at gen 50, 100, 150... and best.winrate is still 0, RESET population.
             if generation % 50 == 0 and 'best' in locals() and best.winrate < 1.0:
-                 print("⚠️ Lab Stagnation Detected (0% Winrate). RESETTING Population for fresh ideas.")
+                 print("[EVO] ⚠️ Lab Stagnation Detected (0% Winrate). RESETTING Population for fresh ideas.")
                  population = [Genome() for _ in range(POPULATION_SIZE)]
 
             
@@ -350,7 +355,7 @@ def evolution_worker():
                 # Check directly and silently
                 new_params = ask_deepseek_for_strategy(summary) 
                 if new_params:
-                    print(f"🤖 DeepSeek Suggested: {new_params}")
+                    print(f"[EVO] 🤖 DeepSeek Suggested: {new_params}")
                     population.append(Genome(new_params)) # Inject into population
     
             # 2. Evaluate
@@ -362,12 +367,12 @@ def evolution_worker():
             
             # 3. Promotion Logic
             if best.winrate > 60 and best.trades > 15:
-                print(f"🏆 PROMOTING Strategy to REAL: WR {best.winrate:.1f}% | ROI {best.roi:.2f}% | Params: {best.params}")
+                print(f"[EVO] 🏆 PROMOTING Strategy to REAL: WR {best.winrate:.1f}% | ROI {best.roi:.2f}% | Params: {best.params}")
                 dm.save_strategy(best, origin='lab_deepseek' if generation % 50 == 1 else 'lab_evo', status='active')
             else:
                  if best.winrate > 50 and best.trades > 5:
                       if generation % 10 == 0:
-                          print(f"🧪 Saving Lab Candidate: WR {best.winrate:.1f}% (Needs Improvement)")
+                          print(f"[EVO] 🧪 Saving Lab Candidate: WR {best.winrate:.1f}% (Needs Improvement)")
                           dm.save_strategy(best, origin='lab_evo', status='lab')
     
             # 4. Evolution
@@ -384,7 +389,7 @@ def evolution_worker():
                  cull_weak_strategies(bt, dm)
     
             if generation % 10 == 0:
-                 print(f"🧬 Gen {generation} Best: WR {best.winrate:.1f}% | Trades {best.trades}")
+                 print(f"[EVO] 🧬 Gen {generation} Best: WR {best.winrate:.1f}% | Trades {best.trades}")
                  
             time.sleep(5)
 

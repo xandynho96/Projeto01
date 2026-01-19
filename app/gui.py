@@ -432,7 +432,7 @@ class BitcoinAIApp:
                     'lab_evo', 'Estratégia Evoluída', 'Best:', 'WR ', 'Trades ',
                     # Added based on user feedback to clean up Main Log
                     'DEMOTED', 'UNDERPERFORMANCE', 'REPLACEMENT', 'FOUND IN LAB', 
-                    'ACTIVE ->', 'ARCHIVED', 'STRATEGY ', 'NO REPLACEMENT'
+                    'ACTIVE ->', 'ARCHIVED', 'STRATEGY ', 'NO REPLACEMENT', '[EVO]'
                 ]
                 
                 # Check normalized message
