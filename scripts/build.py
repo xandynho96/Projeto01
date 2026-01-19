@@ -9,6 +9,18 @@ def build_executable():
     main_script = 'main_launcher.py'
     executable_name = 'BitcoinAI'
     
+    # Backup existing database to prevent data loss
+    db_backup_path = None
+    existing_db = os.path.join('dist', 'data', 'crypto_data.db')
+    if os.path.exists(existing_db):
+        print(f"🛡️  Preserving existing database found at: {existing_db}")
+        db_backup_path = 'crypto_data.db.backup'
+        try:
+            shutil.copy2(existing_db, db_backup_path)
+        except Exception as e:
+            print(f"Warning: Could not backup DB: {e}")
+            db_backup_path = None
+
     # Clean previous builds
     if os.path.exists('build'):
         shutil.rmtree('build')
@@ -74,6 +86,18 @@ def build_executable():
     dist_dir = os.path.abspath('dist')
     print(f"Executable is located in: {dist_dir}")
     
+    # Restore preserved database if it existed
+    if db_backup_path and os.path.exists(db_backup_path):
+        target_db_dir = os.path.join(dist_dir, 'data')
+        if not os.path.exists(target_db_dir):
+            os.makedirs(target_db_dir)
+        target_db_path = os.path.join(target_db_dir, 'crypto_data.db')
+        try:
+            shutil.move(db_backup_path, target_db_path)
+            print(f"✅ Restored preserved database to: {target_db_path}")
+        except Exception as e:
+            print(f"❌ Failed to restore database: {e}")
+
     # Post-Build: Copy external resources to dist folder
     print("Copying external resources (DB, Models, Config) to dist/...")
     
@@ -90,6 +114,11 @@ def build_executable():
             try:
                 # Maintain folder structure
                 dest_path = os.path.join(dist_dir, f)
+                
+                # Check for existing DB (from restore)
+                if 'crypto_data.db' in f and os.path.exists(dest_path):
+                    print(f"   [!] Skipping {f} (Preserved DB exists)")
+                    continue
                 dest_dir = os.path.dirname(dest_path)
                 
                 if not os.path.exists(dest_dir):
