@@ -579,7 +579,10 @@ class DataManager:
                 'side': t.side,
                 'amt': t.amount,
                 'price': t.price,
-                'status': t.status
+                'status': t.status,
+                'pnl': getattr(t, 'pnl', 0), # Safe get
+                'exit_price': getattr(t, 'exit_price', 0),
+                'exit_reason': getattr(t, 'exit_reason', '')
             } for t in trades]
         except Exception as e:
             print(f"Error fetching trades: {e}")

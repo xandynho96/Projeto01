@@ -396,11 +396,11 @@ class BitcoinTrader:
                  # --- ADVANCED SCALPING STRATEGY (Confluence) ---
                 # (Variables row, rsi, stoch_k, etc. are already defined above)
                 
-                # Thresholds (Aggressive Scalping)
-                RSI_BUY = 40  # Slightly relaxed
-                RSI_SELL = 60
-                STOCH_BUY = 25
-                STOCH_SELL = 75
+                # Thresholds (Aggressive Scalping -> SafeGuard Adjusted)
+                RSI_BUY = 30  # Stricter: Only deep oversold
+                RSI_SELL = 70 # Stricter: Only deep overbought
+                STOCH_BUY = 20
+                STOCH_SELL = 80
                 
                 strategy_name = "NEUTRO"
 
@@ -421,7 +421,13 @@ class BitcoinTrader:
             # Avoid buying if M5 is already Overbought (Stoch > 80 or RSI > 70)
             # Avoid selling if M5 is already Oversold (Stoch < 20 or RSI < 30)
             if signal == "buy":
-                if stoch_k_5m > 80 or rsi_5m > 70:
+                # TREND FILTER: Only Buy if Price > EMA 200 (Uptrend) OR Deep Oversold Reversal
+                ema_200 = df.iloc[-1].get('ema_200', 0)
+                if current_price < ema_200 and rsi > 30: # Allow "Catch the bottom" only if RSI < 30
+                     self.logger.info(f"📉 TENDÊNCIA: Compra bloqueada por Tendência de Baixa (Preço ${current_price:.2f} < EMA200 ${ema_200:.2f})")
+                     signal = "NEUTRO"
+                
+                elif stoch_k_5m > 80 or rsi_5m > 70:
                     self.logger.info(f"⏳ Filtro M5: Compra bloqueada por M5 Sobrecomprado (Stoch5m={stoch_k_5m:.1f}, RSI5m={rsi_5m:.1f})")
                     signal = "NEUTRO"
                 elif stoch_rsi_k_5m > 0.8:
@@ -429,7 +435,13 @@ class BitcoinTrader:
                      signal = "NEUTRO"
 
             elif signal == "sell":
-                if stoch_k_5m < 20 or rsi_5m < 30:
+                # TREND FILTER: Only Sell if Price < EMA 200 (Downtrend) OR Deep Overbought Reversal
+                ema_200 = df.iloc[-1].get('ema_200', 0)
+                if current_price > ema_200 and rsi < 70: # Allow "Call the top" only if RSI > 70
+                     self.logger.info(f"📈 TENDÊNCIA: Venda bloqueada por Tendência de Alta (Preço ${current_price:.2f} > EMA200 ${ema_200:.2f})")
+                     signal = "NEUTRO"
+
+                elif stoch_k_5m < 20 or rsi_5m < 30:
                     self.logger.info(f"⏳ Filtro M5: Venda bloqueada por M5 Sobrevendido (Stoch5m={stoch_k_5m:.1f}, RSI5m={rsi_5m:.1f})")
                     signal = "NEUTRO"
                 elif stoch_rsi_k_5m < 0.2:
@@ -465,10 +477,11 @@ class BitcoinTrader:
                      self.logger.info(f"🔮 Alvo IA ajustado para Algo Técnico (ATR): {predicted_price:.2f} (Retorno Potencial: {tp_implied*100:.2f}%)")
 
             technical_summary = df.tail(1).to_dict('records')[0]
-            deepseek_key = self.user_settings.get('deepseek_key')
+            deepseek_key = self.user_settings.get('deepseek_key') or config.DEEPSEEK_API_KEY
             
+            # --- MANDATORY DEEPSEEK VALIDATION ---
             if deepseek_key:
-                self.logger.info("🤖 Validando com DeepSeek AI...")
+                self.logger.info("🤖 Validando com DeepSeek AI (OBRIGATÓRIO)...")
                 
                 # Contexto de Mercado
                 trend_direction = "ALTA" if current_price > last_row.get('ema_200', current_price) else "BAIXA"
@@ -478,21 +491,30 @@ class BitcoinTrader:
                     "trend": trend_direction
                 }
                 
-                validation = self.brain.validate_signal_with_deepseek(
-                    current_price, 
-                    predicted_price, 
-                    technical_summary, 
-                    market_context=market_context,
-                    api_key=deepseek_key,
-                    trading_mode=self.user_settings.get('trading_mode', 'Spot')
-                )
-                self.logger.info(f"DeepSeek: {validation['reason']}")
-                
-                if not validation.get('approved', True):
-                    self.logger.warning("⛔ DeepSeek rejeitou a entrada. Cancelando trade.")
-                    return
+                try:
+                    validation = self.brain.validate_signal_with_deepseek(
+                        current_price, 
+                        predicted_price, 
+                        technical_summary, 
+                        market_context=market_context,
+                        api_key=deepseek_key,
+                        trading_mode=self.user_settings.get('trading_mode', 'Spot')
+                    )
+                    
+                    if not validation.get('approved', False):
+                        self.logger.warning(f"⛔ DeepSeek REJEITOU a entrada. Motivo: {validation.get('reason', 'Unknown')}")
+                        return # BLOCK TRADE
+                    else:
+                         self.logger.info(f"✅ DeepSeek APROVOU: {validation.get('reason')}")
+
+                except Exception as e:
+                     self.logger.error(f"❌ Erro na validação DeepSeek: {e}")
+                     self.logger.warning("⛔ Abortando trade por falha na IA Consultora.")
+                     return # BLOCK TRADE IF API FAILS
             else:
-                self.logger.info("DeepSeek ignorado (Sem chave API).")
+                self.logger.warning("⛔ DeepSeek API Key não configurada. Operação cancelada por Segurança (SafeGuard Mode).")
+                self.logger.warning("   Configure a chave no arquivo user_config.json para operar.")
+                return
 
             # Use User Settings
             # 'amount' is treated as MARGIN (Collateral) now, per user expectation.
@@ -568,9 +590,15 @@ class BitcoinTrader:
             tp_move_pct = current_volatility_pct * 3.0
             
             # 3. Fee Protection Guard
+            # 3. Fee Protection Guard
             # Estimate Costs: Taker (0.05%) + Maker (0.02%) + Slippage (~0.05%) = ~0.12% round trip
-            # Kraken Futures Fees vary, taking conservative estimate 0.2% total
-            ESTIMATED_FEES_PCT = 0.002
+            # Kraken Futures Fees vary.
+            
+            is_futures = "Futures" in self.user_settings.get('trading_mode', 'Spot')
+            if is_futures:
+                 ESTIMATED_FEES_PCT = 0.0012 # 0.12% for Futures (More aggressive)
+            else:
+                 ESTIMATED_FEES_PCT = 0.002 # 0.2% for Spot (Conservative)
             
             if tp_move_pct < ESTIMATED_FEES_PCT:
                 self.logger.warning(f"⛔ Volatilidade muito baixa (TP {tp_move_pct*100:.3f}% < Taxas {ESTIMATED_FEES_PCT*100}%). Trade cancelado.")

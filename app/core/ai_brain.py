@@ -507,14 +507,13 @@ class AIBrain:
             # Kraken Futures: ~0.05% Taker + 0.05% SLipport + Funding ~ 0.1% total conservative
             # Let's say 0.12% Roundtrip
             FEES_PCT = 0.12
-            MIN_ROI = 0.15 # 0.15% Min Profit (acima das taxas)
+            MIN_ROI = 0.13 # Reduzido para 0.13% (Margem mínima acima das taxas)
             MODE_NAME = "FUTUROS (Alavancado)"
         else:
             # Spot: 0.26% Taker * 2 = 0.52% (Using BNB/Volume discounts might be lower)
             # Relaxing requirement to allow SCALPING on Spot (capture 0.4% moves)
             FEES_PCT = 0.52
-            MIN_ROI = 0.35 + FEES_PCT # At least cover fees + 0.35% profit (Total ~0.87%)
-            # NOTE: If we are strict, we miss many small moves. DeepSeek should judge VOLATILITY too.
+            MIN_ROI = 0.60 # Spot needs bigger moves
             MODE_NAME = "SPOT (Taxas Altas)"
 
         # Construct Prompt
@@ -532,51 +531,45 @@ class AIBrain:
             """
         
         prompt = f"""
-        Você é um Trader Especialista em Scalping de Alta Alavancagem. 
-        Analise esta oportunidade rápida de Bitcoin (1m Timeframe) considerando o contexto abaixo.
-        MODO DE OPERAÇÃO: {MODE_NAME}
-        {ctx_str}
+        Você é um Trader Especialista em Scalping de Alta Frequência. 
+        Analise esta oportunidade de Bitcoin (1m Timeframe).
+        MODO: {MODE_NAME}
         
         Sinal IA: {signal_type}
         Preço Atual: {current_price}
-        Alvo Técnico (Baseado em ATR): {predicted_price} (Retorno Potencial: {expected_return:.4f}%)
+        Alvo Técnico: {predicted_price} (Retorno: {expected_return:.4f}%)
         
-        CRITÉRIOS DE APROVAÇÃO:
-        1. VIABILIDADE: O Retorno Potencial ({expected_return:.4f}%) cobre as taxas ({FEES_PCT}%) e deixa lucro?
-           - Se Retorno < {FEES_PCT}%, REJEITE (Prejuízo matemático).
-           - Se Retorno > {FEES_PCT}% mas < {MIN_ROI}%, aprove APENAS se os indicadores forem MUITO fortes (Setup Perfeito).
+        FEES (Taxas): {FEES_PCT}%
         
-        2. QUALIDADE TÉCNICA:
-           - RSI/StochRSI confirmam a direção? (Não compre se RSI > 70, Não venda se RSI < 30, exceto rompimento forte).
-           - O cenário favorece o trade? (Ex: Compra em Tendência de Alta ou Reversão clara).
+        CRITÉRIOS FLEXÍVEIS (SCALPING):
+        1. VIABILIDADE FINANCEIRA:
+           - Se Retorno < {FEES_PCT}%, REJEITE (Prejuízo Certo).
+           - Se Retorno > {FEES_PCT}%, o trade é MATEMATICAMENTE VIÁVEL.
+           - Em Scalping, lucros pequenos (0.01% - 0.05% líquidos) SÃO ACEITÁVEIS se a probabilidade de acerto for alta.
         
-        3. DECISÃO FINAL:
-           - Se o setup é bom e paga as taxas: APROVE (true).
-           - Se é arriscado, contra tendência ou paga pouco: REJEITE (false).
+        2. ANÁLISE TÉCNICA (1m Timeframe):
+           - Se ATR está ALTO ({technical_summary.get('atr', 0):.4f}), a volatilidade permite saídas rápidas. SEJA MAIS AGRESSIVO.
+           - RSI/StochRSI: Em tendências fortes, sobrecompra/sovenda PODEM SER IGNORADOS a favor do Momentum.
+           - Contra-Tendência: Aceitável se houver divergência ou distorção grande do preço (Price Action).
         
-        Contexto Técnico:
-        - RSI: {technical_summary.get('rsi', 50):.2f} (Neutro 40-60)
-        - StochRSI K: {technical_summary.get('stoch_rsi_k', 0.5):.2f} (0-1, >0.8 ob, <0.2 os)
-        - ATR (Volatilidade): {technical_summary.get('atr', 0):.4f} (Se alto, bom para scalping)
-        - MACD: {technical_summary.get('macd', 0):.4f}
-        - BB Width: {technical_summary.get('bb_width', 0):.4f}
-        - ADX: {technical_summary.get('adx', 0):.2f} (Força da Tendência)
-        - OBV Slope: {technical_summary.get('obv_slope', 0):.4f} (Fluxo de Volume)
-        - Distância Suporte: {technical_summary.get('dist_support', 0):.2f}%
-        - Distância Resistência: {technical_summary.get('dist_resistance', 0):.2f}%
-        - Pontuação de Padrão: {technical_summary.get('pattern_score', 0):.1f}
+        3. DECISÃO:
+           - O objetivo é NÃO PERDER dinheiro com taxas. Se paga as taxas e tem lógica técnica, APROVE.
+           - Não busque o trade perfeito. Busque o trade com Expectativa Matemática Positiva.
         
-        PRICE ACTION AVANÇADO:
-        - Tendência: {market_context.get('trend', 'N/A')} (Score: {technical_summary.get('trend_score', 0)})
-        - Padrão Triângulo/Squeeze? {'SIM' if technical_summary.get('pattern_triangle', 0) else 'NAO'}
-        - Pivot High Recente? {'SIM' if technical_summary.get('is_pivot_high', 0) else 'NAO'}
-        - Pivot Low Recente? {'SIM' if technical_summary.get('is_pivot_low', 0) else 'NAO'}
-        - Distância Fib 50%: {technical_summary.get('fib_500', 0):.2f}%
+        {ctx_str}
         
-        Responda APENAS JSON:
+        DADOS TÉCNICOS:
+        - RSI: {technical_summary.get('rsi', 50):.2f} 
+        - StochRSI K: {technical_summary.get('stoch_rsi_k', 0.5):.2f}
+        - ATR: {technical_summary.get('atr', 0):.4f}
+        - ADX: {technical_summary.get('adx', 0):.2f}
+        - Dist. Suporte: {technical_summary.get('dist_support', 0):.2f}%
+        - Dist. Resistência: {technical_summary.get('dist_resistance', 0):.2f}%
+        
+        Responda JSON:
         {{
             "approved": true/false,
-            "reason": "Explicação curta focada no contexto e taxas"
+            "reason": "Explicação sucinta (PT-BR) focada no Scalping"
         }}
         """
         
@@ -588,15 +581,16 @@ class AIBrain:
         payload = {
             "model": "deepseek-chat",
             "messages": [
-                {"role": "system", "content": "You are a Senior Risk Analyst & Scalping Expert. Analyze the trade deeply. Output JSON only."},
+                {"role": "system", "content": "You are a Aggressive Scalping AI. You prioritize positive expectancy over perfection. Output JSON only."},
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 300,
-            "temperature": 0.3
+            "max_tokens": 250,
+            "temperature": 0.4
         }
         
         try:
-            response = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=5)
+            # Increased timeout to 20s to prevent ReadTimeout
+            response = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=20)
             if response.status_code == 200:
                 data = response.json()
                 content = data['choices'][0]['message']['content'].strip()
@@ -604,9 +598,11 @@ class AIBrain:
                 content = content.replace("```json", "").replace("```", "").strip()
                 return json.loads(content)
             else:
-                return {"approved": True, "reason": f"Erro API {response.status_code}, aprovado auto."}
+                return {"approved": True, "reason": f"Erro API {response.status_code}, aprovado auto (Fallback)."}
         except Exception as e:
-            return {"approved": True, "reason": f"Erro Validação: {e}, aprovado auto."}
+            # Fallback to approved on timeout/error to not block trading if API fails
+            print(f"⚠️ DeepSeek Error: {e}")
+            return {"approved": True, "reason": "Erro Conexão DeepSeek, aprovado auto (Fallback)."}
 
 if __name__ == "__main__":
     from app.core.data_manager import DataManager

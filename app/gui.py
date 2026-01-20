@@ -282,11 +282,18 @@ class BitcoinAIApp:
         history_frame = ttk.LabelFrame(content_frame, text="Histórico de Trades (Ao Vivo)", padding="5")
         history_frame.grid(row=0, column=1, sticky="nsew", padx=5)
         
-        cols = ('Hora', 'Símbolo', 'Lado', 'Qtd', 'Preço', 'Status')
+        cols = ('Hora', 'Símbolo', 'Lado', 'Qtd', 'Preço', 'Status', 'Resultado')
         self.tree = ttk.Treeview(history_frame, columns=cols, show='headings', height=8)
         for col in cols:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=80 if col != 'Hora' else 140)
+            width = 80
+            if col == 'Hora': width = 140
+            if col == 'Resultado': width = 100
+            self.tree.column(col, width=width)
+        
+        # Tags for colored rows
+        self.tree.tag_configure('win', foreground='green')
+        self.tree.tag_configure('loss', foreground='red')
         
         scrollbar = ttk.Scrollbar(history_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
@@ -499,16 +506,37 @@ class BitcoinAIApp:
                 self.weekly_pl_var.set(f"PL Semanal: ${w_pl:.2f}")
                 
                 # History
-                trades = self.trader_instance.dm.get_recent_trades(limit=20)
+                # History (Closed Trades with PnL)
+                recent_trades = self.trader_instance.dm.get_recent_trades(limit=20)
 
                 # Clear current items
                 for item in self.tree.get_children():
                     self.tree.delete(item)
+                
                 # Add new items
-                for t in trades:
+                for t in recent_trades:
+                    # Determine Win/Loss text if closed
+                    result_text = "---"
+                    row_tag = ""
+                    
+                    if t['status'] == 'closed':
+                        # PnL might be in 'pnl' or we calculate it? 
+                        # Assuming DM sets 'pnl' field on closing.
+                        pnl = t.get('pnl', 0)
+                        if pnl is None: pnl = 0
+                        
+                        if pnl > 0:
+                            result_text = f"✅ +${pnl:.2f}"
+                            row_tag = 'win'
+                        elif pnl < 0:
+                            result_text = f"❌ -${abs(pnl):.2f}"
+                            row_tag = 'loss'
+                        else:
+                             result_text = "0.00"
+                    
                     self.tree.insert('', 'end', values=(
-                        t['time'], t['symbol'], t['side'].upper(), t['amt'], f"${t['price']:.2f}", t['status']
-                    ))
+                        t['time'], t['symbol'], t['side'].upper(), t['amt'], f"${t['price']:.2f}", t['status'], result_text
+                    ), tags=(row_tag,))
              except Exception as e:
                  print(f"UI Update Error: {e}")
                 
@@ -667,9 +695,15 @@ class BitcoinAIApp:
                 from app.core.data_manager import DataManager
                 tmp_dm = DataManager()
                 # Use new API based PnL
-                pnl = tmp_dm.get_api_pnl_24h() 
+                # Use new API based PnL
+                # Fix: Check for 'get_api_pnl_24h' existence or fallback
+                if hasattr(tmp_dm, 'get_api_pnl_24h'):
+                     pnl = tmp_dm.get_api_pnl_24h() 
+                else:
+                     pnl = tmp_dm.get_24h_pnl() # Fallback to DB
+                     
                 color = "green" if pnl >= 0 else "red"
-                self.lbl_pnl_24h.configure(text=f"PnL 24h (API): ${pnl:.2f}", foreground=color)
+                self.lbl_pnl_24h.configure(text=f"PnL 24h: ${pnl:.2f}", foreground=color)
                 
         except Exception:
             pass # Ignore errors during update
